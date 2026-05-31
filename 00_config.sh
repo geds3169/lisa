@@ -289,11 +289,14 @@ _step() {
     local PCT=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
     local BAR=$(_bar "$PCT")
     case "$STATUS" in
-        OK)   printf "  ${GREEN}[ OK ]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n" "$LABEL" "$PCT" "$BAR" ;;
-        SKIP) printf "  ${CYAN}[SKIP]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n" "$LABEL" "$PCT" "$BAR" ;;
-        *)    printf "  ${RED}[FAIL]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n" "$LABEL" "$PCT" "$BAR" ;;
+        OK)   printf "  ${GREEN}[ OK ]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n\n" "$LABEL" "$PCT" "$BAR" ;;
+        SKIP) printf "  ${CYAN}[SKIP]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n\n" "$LABEL" "$PCT" "$BAR" ;;
+        *)    printf "  ${RED}[FAIL]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n\n" "$LABEL" "$PCT" "$BAR" ;;
     esac
 }
+
+# Forcer mode texte pendant le bootstrap — whiptail pas encore dispo
+USE_WHIPTAIL=false
 
 # Affichage liste des outils
 echo ""
