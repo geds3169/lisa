@@ -314,8 +314,10 @@ if $USE_WHIPTAIL; then
     ) | whiptail --title "Préparation de L.I.S.A."         --gauge "Mise à jour des sources de paquets..." 8 60 0
 else
     printf "  ${BLUE}[    ]${RESET} %-50s" "Mise à jour des sources de paquets..."
-    echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null         && printf "  ${GREEN}[ OK ]${RESET}
-"         || printf "  ${RED}[FAIL]${RESET}
+    echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null         && printf "
+  ${GREEN}[ OK ]${RESET}
+"         || printf "
+  ${RED}[FAIL]${RESET}
 "
 fi
 CURRENT_STEP=$((CURRENT_STEP + 1))
@@ -437,11 +439,11 @@ Puis relancez L.I.S.A."
     fi
 fi
 
-# Keepalive sudo
+# Keepalive sudo (stdin redirigé pour ne pas capturer les saisies)
 (while [ -f "$PASS_KEY" ]; do
     echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1
     sleep 240
-done) &
+done) </dev/null &
 SUDO_KEEPALIVE_PID=$!
 echo "$SUDO_KEEPALIVE_PID" > "$STACK_DIR/.sudo_keepalive.pid"
 

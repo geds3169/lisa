@@ -119,7 +119,7 @@ _get_pass() {
 (while [ -f "$PASS_KEY" ]; do
     echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1
     sleep 240
-done) &
+done) </dev/null &
 SUDO_KEEPALIVE_PID=$!
 
 # ===================================================================================
