@@ -267,104 +267,78 @@ done
 
 PKGS_TO_INSTALL=(tmux jq curl whiptail)
 PKGS_LABELS=(
-    "tmux    — gestionnaire de sessions terminal"
-    "jq      — traitement JSON"
-    "curl    — téléchargements"
+    "tmux     — gestionnaire de sessions terminal"
+    "jq       — traitement JSON"
+    "curl     — téléchargements"
     "whiptail — interface graphique terminal"
 )
-TOTAL_STEPS=$((${#PKGS_TO_INSTALL[@]} + 1))  # +1 pour apt-get update
+TOTAL_STEPS=$(( ${#PKGS_TO_INSTALL[@]} + 2 ))
 CURRENT_STEP=0
 
-_progress() {
-    # _progress "label" pct
-    local LABEL="$1"
-    local PCT="$2"
-    if $USE_WHIPTAIL; then
-        echo "$PCT" | whiptail --title "Préparation de L.I.S.A."             --gauge "$LABEL" 8 60 0
-    else
-        # Barre de progression texte
-        local FILLED=$(( PCT * 30 / 100 ))
-        local EMPTY=$(( 30 - FILLED ))
-        local BAR=""
-        for ((i=0; i<FILLED; i++)); do BAR+="█"; done
-        for ((i=0; i<EMPTY; i++)); do BAR+="░"; done
-        printf "
-${BLUE}[%3d%%]${RESET} ${BAR} %s" "$PCT" "$LABEL"
-        [ "$PCT" -eq 100 ] && echo ""
-    fi
+_bar() {
+    local PCT=$1 FILLED=$(( $1 * 30 / 100 )) B=""
+    local EMPTY=$(( 30 - FILLED ))
+    for ((i=0; i<FILLED; i++)); do B+="█"; done
+    for ((i=0; i<EMPTY; i++)); do B+="░"; done
+    echo "$B"
 }
 
-_progress_step() {
-    local LABEL="$1"
+_step() {
+    local LABEL="$1" STATUS="$2"
     CURRENT_STEP=$((CURRENT_STEP + 1))
     local PCT=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
-    _progress "$LABEL" "$PCT"
+    local BAR=$(_bar "$PCT")
+    case "$STATUS" in
+        OK)   printf "  ${GREEN}[ OK ]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n" "$LABEL" "$PCT" "$BAR" ;;
+        SKIP) printf "  ${CYAN}[SKIP]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n" "$LABEL" "$PCT" "$BAR" ;;
+        *)    printf "  ${RED}[FAIL]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n" "$LABEL" "$PCT" "$BAR" ;;
+    esac
 }
 
-# --- Mise à jour de la liste des paquets ---
+# Affichage liste des outils
 echo ""
 echo -e "${CYAN}  Préparation de L.I.S.A.${RESET}"
 echo -e "${MAGENTA}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
+echo -e "  Outils à installer :"
+for LABEL in "${PKGS_LABELS[@]}"; do
+    echo -e "    ${BLUE}•${RESET} $LABEL"
+done
+echo ""
+echo -e "  ${MAGENTA}────────────────────────────────────────────────────${RESET}"
+echo ""
 
-if $USE_WHIPTAIL; then
-    (
-        echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null
-        echo 100
-    ) | whiptail --title "Préparation de L.I.S.A."         --gauge "Mise à jour des sources de paquets..." 8 60 0
-else
-    printf "  ${BLUE}[    ]${RESET} %-50s" "Mise à jour des sources de paquets..."
-    echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null         && printf "
-  ${GREEN}[ OK ]${RESET}
-"         || printf "
-  ${RED}[FAIL]${RESET}
-"
-fi
-CURRENT_STEP=$((CURRENT_STEP + 1))
+# Nettoyage cache APT
+echo "$(_get_pass)" | sudo -S apt-get clean -qq 2>/dev/null
+_step "Nettoyage du cache APT" "OK"
 
-# --- Installation des paquets ---
+# Mise à jour des sources
+echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null \
+    && _step "Mise à jour des sources de paquets" "OK" \
+    || _step "Mise à jour des sources de paquets" "FAIL"
+
+# Installation des paquets
 for i in "${!PKGS_TO_INSTALL[@]}"; do
     PKG="${PKGS_TO_INSTALL[$i]}"
     LABEL="${PKGS_LABELS[$i]}"
-
     if command -v "$PKG" &>/dev/null; then
-        CURRENT_STEP=$((CURRENT_STEP + 1))
-        PCT=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
-        if $USE_WHIPTAIL; then
-            echo "$PCT" | whiptail --title "Préparation de L.I.S.A."                 --gauge "$LABEL — déjà présent" 8 60 0
-            sleep 0.3
-        else
-            printf "
-${GREEN}[ OK ]${RESET} %-50s
-" "$LABEL"
-        fi
+        _step "$LABEL" "SKIP"
     else
-        if $USE_WHIPTAIL; then
-            CURRENT_STEP=$((CURRENT_STEP + 1))
-            PCT=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
-            (
-                echo "$(_get_pass)" | sudo -S apt-get install -y "$PKG" -qq 2>/dev/null
-                echo 100
-            ) | whiptail --title "Préparation de L.I.S.A."                 --gauge "Installation : $LABEL" 8 60 "$PCT"
-        else
-            printf "  ${BLUE}[    ]${RESET} %-50s" "$LABEL"
-            echo "$(_get_pass)" | sudo -S apt-get install -y "$PKG" -qq 2>/dev/null                 && printf "
-  ${GREEN}[ OK ]${RESET}
-"                 || printf "
-  ${RED}[FAIL]${RESET}
-"
-            CURRENT_STEP=$((CURRENT_STEP + 1))
-        fi
+        echo "$(_get_pass)" | sudo -S apt-get install -y "$PKG" -qq 2>/dev/null \
+            && _step "$LABEL" "OK" \
+            || _step "$LABEL" "FAIL"
     fi
 done
 
-! $USE_WHIPTAIL && echo ""
+echo ""
 
 # Activer whiptail maintenant qu'il est installé
 if command -v whiptail &>/dev/null && [ -t 1 ]; then
     USE_WHIPTAIL=true
     clear
 fi
+
+
 
 # ===================================================================================
 # VÉRIFICATION ET AJOUT SUDOERS
