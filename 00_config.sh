@@ -115,12 +115,12 @@ _input() {
 
 _bar() {
     local PCT=$1
-    local FILLED=$(( PCT * 40 / 100 ))
-    local EMPTY=$(( 40 - FILLED ))
+    local FILLED=$(( PCT * 30 / 100 ))
+    local EMPTY=$(( 30 - FILLED ))
     local B=""
-    for ((i=0; i<FILLED; i++)); do B+="█"; done
-    for ((i=0; i<EMPTY; i++)); do B+="░"; done
-    echo "$B"
+    for ((i=0; i<FILLED; i++)); do B+="#"; done
+    for ((i=0; i<EMPTY; i++)); do B+="-"; done
+    printf "[%s]" "$B"
 }
 
 _run() {
@@ -131,9 +131,8 @@ _run() {
     local BAR
     BAR=$(_bar "$PCT")
 
-    printf "  ${BLUE}[ .. ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s" "$LABEL" "$PCT" "$BAR"
+    printf "  [ >> ]  %-40s  %3d%%  %s\n" "$LABEL" "$PCT" "$BAR"
 
-    # Exécution avec sudo via stdin
     local PASS
     PASS=$(_get_pass)
     echo "$PASS" | sudo -S "${@:4}" >> "$LOG_FILE" 2>&1
@@ -141,163 +140,22 @@ _run() {
     unset PASS
 
     if [ $RC -eq 0 ]; then
-        printf "
-  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
-
-" "$LABEL" "$PCT" "$BAR"
+        printf "  [ OK ]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
     else
-        printf "
-  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
-
-" "$LABEL" "$PCT" "$BAR"
-        error "Échec : $LABEL — consultez $LOG_FILE"
+        printf "  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        echo ""
+        error "Echec : $LABEL"
+        error "Consultez $LOG_FILE pour les details."
         exit 1
     fi
 }
-
-
-# ===================================================================================
-# DÉTECTION ARCHITECTURE
-# ===================================================================================
-ARCH=$(uname -m)
-case "$ARCH" in
-    x86_64)        PLATFORM="linux/amd64" ; ARCH_LABEL="x86_64 (AMD64)" ;;
-    aarch64|arm64) PLATFORM="linux/arm64" ; ARCH_LABEL="ARM64" ;;
-    *)
-        error "Architecture $ARCH non supportée. x86_64 et ARM64 uniquement."
-        exit 1
-        ;;
-esac
-
-if [[ "$(uname -s)" != "Linux" ]]; then
-    error "L.I.S.A. Stack requiert Linux."
-    exit 1
-fi
-
-OS_NAME="Inconnue"
-[ -f /etc/os-release ] && . /etc/os-release && OS_NAME="$PRETTY_NAME"
-
-# Vérification openssl (requis pour le chiffrement des secrets)
-if ! command -v openssl &>/dev/null; then
-    echo ""
-    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${RED}  Outil manquant : openssl${RESET}"
-    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo ""
-    echo -e "  openssl est nécessaire pour protéger vos données."
-    echo -e "  Il n'est pas présent sur ce système."
-    echo ""
-    echo -e "  Installez-le en copiant cette commande dans votre terminal :"
-    echo ""
-    echo -e "  ${GREEN}sudo apt-get update && sudo apt-get install -y openssl${RESET}"
-    echo ""
-    echo -e "  Puis relancez L.I.S.A. avec :"
-    echo -e "  ${GREEN}bash install.sh${RESET}"
-    echo ""
-    exit 1
-fi
-
-# ===================================================================================
-# DÉTECTION RESSOURCES
-# ===================================================================================
-CPU_CORES=$(nproc)
-RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-RAM_GB=$((RAM_KB / 1024 / 1024))
-DISK_FREE=$(df -BG "$HOME" | awk 'NR==2{print $4}' | tr -d 'G')
-
-if [ "$RAM_GB" -lt 4 ]; then
-    error "RAM insuffisante : ${RAM_GB}GB. Minimum requis : 4GB."
-    exit 1
-fi
-
-if   [ "$RAM_GB" -lt 8  ]; then RAM_PROFILE="low"    ; LLM_MODEL_LOCAL="phi3"
-elif [ "$RAM_GB" -lt 16 ]; then RAM_PROFILE="medium"  ; LLM_MODEL_LOCAL="llama3.2"
-else                             RAM_PROFILE="high"    ; LLM_MODEL_LOCAL="llama3.1:8b"
-fi
-
-GPU_TYPE="none" ; GPU_LABEL="Aucun — mode CPU"
-if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
-    GPU_LABEL=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-    GPU_TYPE="nvidia"
-elif lspci 2>/dev/null | grep -qi "amd\|radeon"; then
-    GPU_LABEL="AMD GPU (CPU fallback)" ; GPU_TYPE="amd"
-fi
-
-[ "$DISK_FREE" -lt 20 ] && warn "Espace disque faible (${DISK_FREE}GB). Minimum recommandé : 20GB."
-
-# ===================================================================================
-# MOT DE PASSE SYSTÈME
-# ===================================================================================
-section "Authentification"
-
-echo -e "  L.I.S.A. a besoin de votre mot de passe pour :"
-echo -e "    ${BLUE}•${RESET} Installer Docker et les outils système"
-echo -e "    ${BLUE}•${RESET} Configurer le pare-feu"
-echo -e "    ${BLUE}•${RESET} Vous ajouter au groupe Docker"
-echo ""
-echo -e "  ${YELLOW}Votre mot de passe est chiffré localement et supprimé${RESET}"
-echo -e "  ${YELLOW}automatiquement à la fin de l'installation.${RESET}"
-echo ""
-
-EPHEMERAL_KEY=$(openssl rand -hex 32)
-echo "$EPHEMERAL_KEY" > "$PASS_KEY"
-chmod 600 "$PASS_KEY"
-
-_get_pass() {
-    openssl enc -d -aes-256-cbc -pbkdf2 \
-        -pass pass:"$(cat "$PASS_KEY")" -in "$PASS_ENC" 2>/dev/null
-}
-
-while true; do
-    _password "Authentification" "Votre mot de passe de session Linux" SYS_PASS
-    echo "$SYS_PASS" | openssl enc -aes-256-cbc -pbkdf2 \
-        -pass pass:"$EPHEMERAL_KEY" -out "$PASS_ENC" 2>/dev/null
-    chmod 600 "$PASS_ENC"
-    unset SYS_PASS
-    if echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
-        echo -e "  ${GREEN}[ OK ]${RESET}  Authentification validée\n"
-        break
-    else
-        echo -e "  ${RED}Mot de passe incorrect, réessayez.${RESET}\n"
-        rm -f "$PASS_ENC"
-    fi
-done
-
-# ===================================================================================
-# ===================================================================================
-# DÉPENDANCES BOOTSTRAP
-# ===================================================================================
-section "Préparation de L.I.S.A."
-
-PKGS_ALL=(tmux jq curl)
-PKGS_LABELS=(
-    "tmux — gestionnaire de sessions terminal"
-    "jq   — traitement JSON"
-    "curl — téléchargements"
-)
-
-# Détection de ce qui est présent ou manquant
-echo -e "  Vérification des outils nécessaires :\n"
-PKGS_TO_INSTALL=()
-for i in "${!PKGS_ALL[@]}"; do
-    PKG="${PKGS_ALL[$i]}"
-    LABEL="${PKGS_LABELS[$i]}"
-    if command -v "$PKG" &>/dev/null; then
-        printf "    ${GREEN}[ OK ]${RESET}  %-44s ${GREEN}déjà présent${RESET}\n\n" "$LABEL"
-    else
-        printf "    ${YELLOW}[----]${RESET}  %-44s ${YELLOW}à installer${RESET}\n\n" "$LABEL"
-        PKGS_TO_INSTALL+=("$PKG")
-    fi
-done
-
-echo -e "  ${MAGENTA}────────────────────────────────────────────────────${RESET}\n"
 
 # Nettoyage cache + mise à jour sources + installation
 TOTAL_STEPS=$(( ${#PKGS_TO_INSTALL[@]} + 2 ))
 STEP=0
 
 # Fonction animation barre pendant une commande en arrière-plan
-_run_animated() {
+_run() {
     local LABEL="$1"
     local TOTAL="$2"
     local STEP="$3"
@@ -339,18 +197,18 @@ _run_animated() {
 
 # Nettoyage cache
 STEP=$((STEP + 1))
-_run_animated "Nettoyage du cache APT" "$TOTAL_STEPS" "$STEP" \
+_run "Nettoyage du cache APT" "$TOTAL_STEPS" "$STEP" \
     apt-get clean -qq
 
 # Mise à jour sources
 STEP=$((STEP + 1))
-_run_animated "Mise à jour des sources de paquets" "$TOTAL_STEPS" "$STEP" \
+_run "Mise à jour des sources de paquets" "$TOTAL_STEPS" "$STEP" \
     apt-get update -qq
 
 # Installation séquentielle des paquets manquants
 for PKG in "${PKGS_TO_INSTALL[@]}"; do
     STEP=$((STEP + 1))
-    _run_animated "Installation de $PKG" "$TOTAL_STEPS" "$STEP" \
+    _run "Installation de $PKG" "$TOTAL_STEPS" "$STEP" \
         apt-get install -y "$PKG" -qq
 done
 
