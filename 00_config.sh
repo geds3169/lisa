@@ -72,10 +72,9 @@ trap 'exit 1' INT TERM
 # ===================================================================================
 # DÉTECTION WHIPTAIL
 # ===================================================================================
+# Whiptail forcé à false pendant tout 00_config.sh (bootstrap inclus)
+# Il sera activé dans 01_config.sh une fois installé
 USE_WHIPTAIL=false
-if command -v whiptail &>/dev/null && [ -t 1 ]; then
-    USE_WHIPTAIL=true
-fi
 
 # Helpers UI — whiptail ou fallback texte
 _msg() {
