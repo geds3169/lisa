@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===================================================================================
 # L.I.S.A — Local Intelligent System Assistant
-# 00_config.sh — Détection système, sudo, chiffrement AES-256, bootstrap whiptail
+# 00_config.sh — Détection système, sudo, chiffrement AES-256, bootstrap terminal
 # ===================================================================================
 
 RED="\033[1;31m"
@@ -70,279 +70,158 @@ trap '_trap_cleanup' EXIT
 trap 'exit 1' INT TERM
 
 # ===================================================================================
-# DÉTECTION WHIPTAIL
 # ===================================================================================
-# Whiptail forcé à false pendant tout 00_config.sh (bootstrap inclus)
-# Il sera activé dans 01_config.sh une fois installé
-USE_WHIPTAIL=false
+# HELPERS AFFICHAGE TERMINAL
+# ===================================================================================
 
-# Helpers UI — whiptail ou fallback texte
+# Boîte message texte
 _msg() {
-    # _msg "Titre" "Message"
-    if $USE_WHIPTAIL; then
-        whiptail --title "$1" --msgbox "$2" 12 60
-    else
-        echo "" ; echo -e "${CYAN}$1${RESET}" ; echo -e "$2" ; echo ""
-    fi
+    echo ""
+    echo -e "${CYAN}  ┌─────────────────────────────────────────────────┐${RESET}"
+    echo -e "${CYAN}  │  $1${RESET}"
+    echo -e "${CYAN}  ├─────────────────────────────────────────────────┤${RESET}"
+    while IFS= read -r LINE; do
+        printf "${CYAN}  │${RESET}  %-47s${CYAN}│${RESET}
+" "$LINE"
+    done <<< "$2"
+    echo -e "${CYAN}  └─────────────────────────────────────────────────┘${RESET}"
+    echo ""
+    echo -ne "  Appuyez sur Entrée pour continuer..." ; read -r
+    echo ""
 }
 
+# Question oui/non
 _yesno() {
-    # _yesno "Titre" "Question" → retourne 0=oui 1=non
-    if $USE_WHIPTAIL; then
-        whiptail --title "$1" --yesno "$2" 10 60
-        return $?
-    else
-        echo -ne "${YELLOW}[?]${RESET} $2 [O/n] : " ; read -r R
-        [[ ! "$R" =~ ^[Nn]$ ]] && return 0 || return 1
-    fi
+    echo ""
+    echo -e "${CYAN}  $1${RESET}"
+    echo -e "  $2"
+    echo ""
+    echo -ne "${YELLOW}  [?]${RESET} Votre choix [O/n] : " ; read -r R
+    echo ""
+    [[ ! "$R" =~ ^[Nn]$ ]] && return 0 || return 1
 }
 
+# Saisie mot de passe
 _password() {
-    # _password "Titre" "Message" VARNAME
-    if $USE_WHIPTAIL; then
-        local VAL
-        VAL=$(whiptail --title "$1" --passwordbox "$2" 10 60 3>&1 1>&2 2>&3)
-        eval "$3=\"$VAL\""
-    else
-        echo -ne "${YELLOW}[?]${RESET} $2 : " ; read -r -s R ; echo ""
-        eval "$3=\"$R\""
-    fi
+    echo -ne "${YELLOW}  [?]${RESET} $2 : " ; read -r -s R ; echo ""
+    eval "$3="$R""
 }
 
+# Saisie texte
+_input() {
+    echo -ne "${YELLOW}  [?]${RESET} $2 : " ; read -r R
+    eval "$3="$R""
+}
+
+# Info box
 _info_box() {
-    # _info_box "Titre" "Contenu"
-    if $USE_WHIPTAIL; then
-        whiptail --title "$1" --infobox "$2" 10 60
-        sleep 2
-    else
-        section "$1"
-        echo -e "$2"
-    fi
+    echo -e "${CYAN}  $1${RESET}"
+    echo -e "  $2"
+    echo ""
 }
-
-# ===================================================================================
-# BANNER (fallback texte uniquement)
-# ===================================================================================
-if ! $USE_WHIPTAIL; then
-    clear
-    echo -e "${CYAN}"
-    cat <<'BANNER'
-  _      _____ _____  _
- | |    |_   _/ ____|/ \
- | |      | | | (___/  /\
- | |      | |  \___ \ / /\
- | |____ _| |_ ____) / /__\
- |______|_____|_____/______\
-
-  Local Intelligent System Assistant
-BANNER
-    echo -e "${RESET}"
-fi
-
-# ===================================================================================
-# VÉRIFICATION ARCHITECTURE
-# ===================================================================================
-ARCH=$(uname -m)
-case "$ARCH" in
-    x86_64)
-        PLATFORM="linux/amd64" ; ARCH_LABEL="x86_64 (AMD64)"
-        ;;
-    aarch64|arm64)
-        PLATFORM="linux/arm64" ; ARCH_LABEL="ARM64"
-        ;;
-    *)
-        _msg "Erreur" "Architecture $ARCH non supportée.\nL.I.S.A. requiert x86_64 ou ARM64."
-        exit 1
-        ;;
-esac
-
-# ===================================================================================
-# VÉRIFICATION OS
-# ===================================================================================
-if [[ "$(uname -s)" != "Linux" ]]; then
-    _msg "Erreur" "L.I.S.A. Stack requiert Linux.\nLe HUD sera multiplateforme via Tauri."
-    exit 1
-fi
-
-OS_NAME="Inconnue"
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS_NAME="$PRETTY_NAME"
-fi
-
-# ===================================================================================
-# DÉTECTION RESSOURCES
-# ===================================================================================
-CPU_CORES=$(nproc)
-RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-RAM_GB=$((RAM_KB / 1024 / 1024))
-DISK_FREE=$(df -BG "$HOME" | awk 'NR==2{print $4}' | tr -d 'G')
-
-# RAM insuffisante
-if [ "$RAM_GB" -lt 4 ]; then
-    _msg "Ressources insuffisantes" \
-"RAM détectée : ${RAM_GB} GB
-Minimum requis : 4 GB
-
-L.I.S.A. ne peut pas être installée sur cette machine."
-    exit 1
-fi
-
-# Profil automatique
-if [ "$RAM_GB" -lt 8 ]; then
-    RAM_PROFILE="low"
-elif [ "$RAM_GB" -lt 16 ]; then
-    RAM_PROFILE="medium"
-else
-    RAM_PROFILE="high"
-fi
-
-# Modèle LLM automatique selon profil
-case "$RAM_PROFILE" in
-    low)    LLM_MODEL_LOCAL="phi3" ;;
-    medium) LLM_MODEL_LOCAL="llama3.2" ;;
-    high)   LLM_MODEL_LOCAL="llama3.1:8b" ;;
-esac
-
-# GPU
-GPU_TYPE="none"
-GPU_LABEL="Aucun — mode CPU"
-if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
-    GPU_LABEL=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-    GPU_TYPE="nvidia"
-elif lspci 2>/dev/null | grep -qi "amd\|radeon"; then
-    GPU_LABEL="AMD GPU (CPU fallback)"
-    GPU_TYPE="amd"
-fi
-
-# Avertissement disque
-[ "$DISK_FREE" -lt 20 ] && \
-    _msg "Avertissement" "Espace disque faible : ${DISK_FREE} GB libres.\nMinimum recommandé : 20 GB."
-
-# ===================================================================================
-# MOT DE PASSE SYSTÈME
-# ===================================================================================
-_msg "Authentification requise" \
-"L.I.S.A. a besoin de votre mot de passe pour :
-
-  • Installer Docker et les outils système
-  • Configurer le pare-feu
-  • Vous ajouter au groupe Docker
-
-Votre mot de passe est chiffré localement
-et supprimé automatiquement à la fin
-de l'installation."
-
-EPHEMERAL_KEY=$(openssl rand -hex 32)
-echo "$EPHEMERAL_KEY" > "$PASS_KEY"
-chmod 600 "$PASS_KEY"
-
-SYS_PASS=""
-while true; do
-    _password "Authentification" "Votre mot de passe de session Linux" SYS_PASS
-    echo "$SYS_PASS" | openssl enc -aes-256-cbc -pbkdf2 \
-        -pass pass:"$EPHEMERAL_KEY" -out "$PASS_ENC" 2>/dev/null
-    chmod 600 "$PASS_ENC"
-    unset SYS_PASS
-
-    _get_pass() {
-        openssl enc -d -aes-256-cbc -pbkdf2 \
-            -pass pass:"$(cat "$PASS_KEY")" -in "$PASS_ENC" 2>/dev/null
-    }
-
-    if echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
-        break
-    else
-        _msg "Mot de passe incorrect" \
-"Le mot de passe saisi est incorrect.
-Veuillez réessayer."
-        rm -f "$PASS_ENC"
-    fi
-done
-
-# ===================================================================================
-# DÉPENDANCES BOOTSTRAP (après authentification — sudo disponible)
-# ===================================================================================
-
-PKGS_TO_INSTALL=(tmux jq curl whiptail)
-PKGS_LABELS=(
-    "tmux     — gestionnaire de sessions terminal"
-    "jq       — traitement JSON"
-    "curl     — téléchargements"
-    "whiptail — interface graphique terminal"
-)
-TOTAL_STEPS=$(( ${#PKGS_TO_INSTALL[@]} + 2 ))
-CURRENT_STEP=0
+_section() {
+    echo ""
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${CYAN}  $1${RESET}"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+}
 
 _bar() {
-    local PCT=$1 FILLED=$(( $1 * 30 / 100 )) B=""
-    local EMPTY=$(( 30 - FILLED ))
+    local PCT=$1
+    local FILLED=$(( PCT * 40 / 100 ))
+    local EMPTY=$(( 40 - FILLED ))
+    local B=""
     for ((i=0; i<FILLED; i++)); do B+="█"; done
     for ((i=0; i<EMPTY; i++)); do B+="░"; done
     echo "$B"
 }
 
-_step() {
-    local LABEL="$1" STATUS="$2"
-    CURRENT_STEP=$((CURRENT_STEP + 1))
-    local PCT=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
-    local BAR=$(_bar "$PCT")
-    case "$STATUS" in
-        OK)   printf "  ${GREEN}[ OK ]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n\n" "$LABEL" "$PCT" "$BAR" ;;
-        SKIP) printf "  ${CYAN}[SKIP]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n\n" "$LABEL" "$PCT" "$BAR" ;;
-        *)    printf "  ${RED}[FAIL]${RESET} %-44s ${BLUE}%3d%%${RESET} %s\n\n" "$LABEL" "$PCT" "$BAR" ;;
-    esac
+_ok()   { printf "  ${GREEN}[ OK ]${RESET}  %s
+
+" "$1"; }
+_skip() { printf "  ${CYAN}[SKIP]${RESET}  %s
+
+" "$1"; }
+_fail() {
+    printf "  ${RED}[FAIL]${RESET}  %s
+
+" "$1"
+    echo ""
+    error "Erreur fatale : $2"
+    error "Consultez $LOG_FILE pour les détails."
+    exit 1
 }
 
-# Forcer mode texte pendant le bootstrap — whiptail pas encore dispo
-USE_WHIPTAIL=false
+_run() {
+    # _run "Label affiché" "commande" [TOTAL] [STEP]
+    local LABEL="$1"
+    local CMD="$2"
+    local TOTAL="${3:-1}"
+    local STEP="${4:-1}"
+    local PCT=$(( STEP * 100 / TOTAL ))
+    local BAR=$(_bar "$PCT")
 
-# Affichage liste des outils
-echo ""
-echo -e "${CYAN}  Préparation de L.I.S.A.${RESET}"
-echo -e "${MAGENTA}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo ""
-echo -e "  Outils à installer :"
-for LABEL in "${PKGS_LABELS[@]}"; do
-    echo -e "    ${BLUE}•${RESET} $LABEL"
+    printf "  ${BLUE}[ .. ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s" "$LABEL" "$PCT" "$BAR"
+    
+    if eval "$CMD" >> "$LOG_FILE" 2>&1; then
+        printf "
+  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
+
+" "$LABEL" "$PCT" "$BAR"
+        return 0
+    else
+        printf "
+  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
+
+" "$LABEL" "$PCT" "$BAR"
+        error "Échec : $LABEL"
+        error "Consultez $LOG_FILE pour les détails."
+        exit 1
+    fi
+}
+
+# ===================================================================================
+# DÉPENDANCES BOOTSTRAP
+# ===================================================================================
+_section "Préparation de L.I.S.A."
+
+PKGS_TO_INSTALL=()
+for PKG in tmux jq curl whiptail; do
+    command -v "$PKG" &>/dev/null || PKGS_TO_INSTALL+=("$PKG")
+done
+
+echo -e "  Outils système nécessaires :"
+for PKG in tmux jq curl whiptail; do
+    if command -v "$PKG" &>/dev/null; then
+        printf "    ${CYAN}•${RESET} %-12s ${GREEN}déjà présent${RESET}
+" "$PKG"
+    else
+        printf "    ${CYAN}•${RESET} %-12s à installer
+" "$PKG"
+    fi
 done
 echo ""
 echo -e "  ${MAGENTA}────────────────────────────────────────────────────${RESET}"
 echo ""
 
-# Nettoyage cache APT
-echo "$(_get_pass)" | sudo -S apt-get clean -qq 2>/dev/null
-_step "Nettoyage du cache APT" "OK"
+TOTAL_STEPS=$(( ${#PKGS_TO_INSTALL[@]} + 2 ))
+STEP=0
 
-# Mise à jour des sources
-echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null \
-    && _step "Mise à jour des sources de paquets" "OK" \
-    || _step "Mise à jour des sources de paquets" "FAIL"
+# Nettoyage cache
+STEP=$((STEP + 1))
+_run "Nettoyage du cache APT"     "echo '$(_get_pass)' | sudo -S apt-get clean -qq 2>/dev/null"     "$TOTAL_STEPS" "$STEP"
 
-# Installation des paquets
-for i in "${!PKGS_TO_INSTALL[@]}"; do
-    PKG="${PKGS_TO_INSTALL[$i]}"
-    LABEL="${PKGS_LABELS[$i]}"
-    if command -v "$PKG" &>/dev/null; then
-        _step "$LABEL" "SKIP"
-    else
-        echo "$(_get_pass)" | sudo -S apt-get install -y "$PKG" -qq 2>/dev/null \
-            && _step "$LABEL" "OK" \
-            || _step "$LABEL" "FAIL"
-    fi
+# Mise à jour sources
+STEP=$((STEP + 1))
+_run "Mise à jour des sources de paquets"     "echo '$(_get_pass)' | sudo -S apt-get update -qq"     "$TOTAL_STEPS" "$STEP"
+
+# Installation paquets manquants
+for PKG in "${PKGS_TO_INSTALL[@]}"; do
+    STEP=$((STEP + 1))
+    _run "Installation de $PKG"         "echo '$(_get_pass)' | sudo -S apt-get install -y $PKG -qq"         "$TOTAL_STEPS" "$STEP"
 done
 
-echo ""
-
-# Activer whiptail maintenant qu'il est installé
-if command -v whiptail &>/dev/null && [ -t 1 ]; then
-    USE_WHIPTAIL=true
-    clear
-fi
-
-
-
-# ===================================================================================
 # VÉRIFICATION ET AJOUT SUDOERS
 # ===================================================================================
 if ! echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
@@ -377,26 +256,13 @@ fi
 BASHRC
         fi
 
-        if $USE_WHIPTAIL; then
-            whiptail --title "Reconnexion nécessaire" --msgbox \
-"Votre compte a été ajouté aux administrateurs.
-
-Linux doit fermer votre session pour appliquer
-ce changement.
-
-L.I.S.A. reprendra automatiquement dès votre
-reconnexion avec le compte : $USER
-
-La session va se fermer dans 10 secondes..." 16 60
-        else
-            echo ""
-            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-            echo -e "${GREEN}  ✓ Compte ajouté aux administrateurs.${RESET}"
-            echo -e "${YELLOW}  → Reconnectez-vous avec : ${GREEN}$USER${RESET}"
-            echo -e "${YELLOW}  → L'installation reprendra automatiquement.${RESET}"
-            echo -e "${RED}  La session se ferme dans 10 secondes...${RESET}"
-            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-        fi
+        echo ""
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo -e "${GREEN}  ✓ Compte ajouté aux administrateurs.${RESET}"
+        echo -e "${YELLOW}  → Reconnectez-vous avec : ${GREEN}$USER${RESET}"
+        echo -e "${YELLOW}  → L'installation reprendra automatiquement.${RESET}"
+        echo -e "${RED}  La session se ferme dans 10 secondes...${RESET}"
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 
         sleep 10
         rm -f "$PASS_ENC" "$PASS_KEY"
