@@ -20,6 +20,7 @@ section() {
     echo -e "\n${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo -e "${CYAN}  $1${RESET}"
     echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
 }
 
 STACK_DIR="$HOME/ai-stack"
@@ -70,19 +71,16 @@ trap '_trap_cleanup' EXIT
 trap 'exit 1' INT TERM
 
 # ===================================================================================
-# ===================================================================================
 # HELPERS AFFICHAGE TERMINAL
 # ===================================================================================
 
-# Boîte message texte
 _msg() {
     echo ""
     echo -e "${CYAN}  ┌─────────────────────────────────────────────────┐${RESET}"
-    echo -e "${CYAN}  │  $1${RESET}"
+    printf "${CYAN}  │  %-47s│${RESET}\n" "$1"
     echo -e "${CYAN}  ├─────────────────────────────────────────────────┤${RESET}"
     while IFS= read -r LINE; do
-        printf "${CYAN}  │${RESET}  %-47s${CYAN}│${RESET}
-" "$LINE"
+        printf "${CYAN}  │${RESET}  %-47s${CYAN}│${RESET}\n" "$LINE"
     done <<< "$2"
     echo -e "${CYAN}  └─────────────────────────────────────────────────┘${RESET}"
     echo ""
@@ -90,7 +88,6 @@ _msg() {
     echo ""
 }
 
-# Question oui/non
 _yesno() {
     echo ""
     echo -e "${CYAN}  $1${RESET}"
@@ -101,30 +98,19 @@ _yesno() {
     [[ ! "$R" =~ ^[Nn]$ ]] && return 0 || return 1
 }
 
-# Saisie mot de passe
 _password() {
-    echo -ne "${YELLOW}  [?]${RESET} $2 : " ; read -r -s R ; echo ""
-    eval "$3="$R""
+    echo -ne "${YELLOW}  [?]${RESET} $2 : "
+    read -r -s REPLY_PASS
+    echo ""
+    eval "$3=\$REPLY_PASS"
+    unset REPLY_PASS
 }
 
-# Saisie texte
 _input() {
-    echo -ne "${YELLOW}  [?]${RESET} $2 : " ; read -r R
-    eval "$3="$R""
-}
-
-# Info box
-_info_box() {
-    echo -e "${CYAN}  $1${RESET}"
-    echo -e "  $2"
-    echo ""
-}
-_section() {
-    echo ""
-    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo -e "${CYAN}  $1${RESET}"
-    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-    echo ""
+    echo -ne "${YELLOW}  [?]${RESET} $2 : "
+    read -r REPLY_INPUT
+    eval "$3=\$REPLY_INPUT"
+    unset REPLY_INPUT
 }
 
 _bar() {
@@ -137,54 +123,116 @@ _bar() {
     echo "$B"
 }
 
-_ok()   { printf "  ${GREEN}[ OK ]${RESET}  %s
-
-" "$1"; }
-_skip() { printf "  ${CYAN}[SKIP]${RESET}  %s
-
-" "$1"; }
-_fail() {
-    printf "  ${RED}[FAIL]${RESET}  %s
-
-" "$1"
-    echo ""
-    error "Erreur fatale : $2"
-    error "Consultez $LOG_FILE pour les détails."
-    exit 1
-}
-
 _run() {
-    # _run "Label affiché" "commande" [TOTAL] [STEP]
     local LABEL="$1"
-    local CMD="$2"
-    local TOTAL="${3:-1}"
-    local STEP="${4:-1}"
+    local TOTAL="${2:-1}"
+    local STEP="${3:-1}"
+    shift 3
     local PCT=$(( STEP * 100 / TOTAL ))
-    local BAR=$(_bar "$PCT")
-
+    local BAR
+    BAR=$(_bar "$PCT")
     printf "  ${BLUE}[ .. ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s" "$LABEL" "$PCT" "$BAR"
-    
-    if eval "$CMD" >> "$LOG_FILE" 2>&1; then
-        printf "
-  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
-
-" "$LABEL" "$PCT" "$BAR"
+    if "$@" >> "$LOG_FILE" 2>&1; then
+        printf "\r  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
         return 0
     else
-        printf "
-  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
-
-" "$LABEL" "$PCT" "$BAR"
-        error "Échec : $LABEL"
-        error "Consultez $LOG_FILE pour les détails."
+        printf "\r  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        error "Échec : $LABEL — consultez $LOG_FILE"
         exit 1
     fi
 }
 
 # ===================================================================================
+# DÉTECTION ARCHITECTURE
+# ===================================================================================
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)        PLATFORM="linux/amd64" ; ARCH_LABEL="x86_64 (AMD64)" ;;
+    aarch64|arm64) PLATFORM="linux/arm64" ; ARCH_LABEL="ARM64" ;;
+    *)
+        error "Architecture $ARCH non supportée. x86_64 et ARM64 uniquement."
+        exit 1
+        ;;
+esac
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+    error "L.I.S.A. Stack requiert Linux."
+    exit 1
+fi
+
+OS_NAME="Inconnue"
+[ -f /etc/os-release ] && . /etc/os-release && OS_NAME="$PRETTY_NAME"
+
+# ===================================================================================
+# DÉTECTION RESSOURCES
+# ===================================================================================
+CPU_CORES=$(nproc)
+RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+RAM_GB=$((RAM_KB / 1024 / 1024))
+DISK_FREE=$(df -BG "$HOME" | awk 'NR==2{print $4}' | tr -d 'G')
+
+if [ "$RAM_GB" -lt 4 ]; then
+    error "RAM insuffisante : ${RAM_GB}GB. Minimum requis : 4GB."
+    exit 1
+fi
+
+if   [ "$RAM_GB" -lt 8  ]; then RAM_PROFILE="low"    ; LLM_MODEL_LOCAL="phi3"
+elif [ "$RAM_GB" -lt 16 ]; then RAM_PROFILE="medium"  ; LLM_MODEL_LOCAL="llama3.2"
+else                             RAM_PROFILE="high"    ; LLM_MODEL_LOCAL="llama3.1:8b"
+fi
+
+GPU_TYPE="none" ; GPU_LABEL="Aucun — mode CPU"
+if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+    GPU_LABEL=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+    GPU_TYPE="nvidia"
+elif lspci 2>/dev/null | grep -qi "amd\|radeon"; then
+    GPU_LABEL="AMD GPU (CPU fallback)" ; GPU_TYPE="amd"
+fi
+
+[ "$DISK_FREE" -lt 20 ] && warn "Espace disque faible (${DISK_FREE}GB). Minimum recommandé : 20GB."
+
+# ===================================================================================
+# MOT DE PASSE SYSTÈME
+# ===================================================================================
+section "Authentification"
+
+echo -e "  L.I.S.A. a besoin de votre mot de passe pour :"
+echo -e "    ${BLUE}•${RESET} Installer Docker et les outils système"
+echo -e "    ${BLUE}•${RESET} Configurer le pare-feu"
+echo -e "    ${BLUE}•${RESET} Vous ajouter au groupe Docker"
+echo ""
+echo -e "  ${YELLOW}Votre mot de passe est chiffré localement et supprimé${RESET}"
+echo -e "  ${YELLOW}automatiquement à la fin de l'installation.${RESET}"
+echo ""
+
+EPHEMERAL_KEY=$(openssl rand -hex 32)
+echo "$EPHEMERAL_KEY" > "$PASS_KEY"
+chmod 600 "$PASS_KEY"
+
+_get_pass() {
+    openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:"$(cat "$PASS_KEY")" -in "$PASS_ENC" 2>/dev/null
+}
+
+while true; do
+    _password "Authentification" "Votre mot de passe de session Linux" SYS_PASS
+    echo "$SYS_PASS" | openssl enc -aes-256-cbc -pbkdf2 \
+        -pass pass:"$EPHEMERAL_KEY" -out "$PASS_ENC" 2>/dev/null
+    chmod 600 "$PASS_ENC"
+    unset SYS_PASS
+    if echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
+        echo -e "  ${GREEN}[ OK ]${RESET}  Authentification validée\n"
+        break
+    else
+        echo -e "  ${RED}Mot de passe incorrect, réessayez.${RESET}\n"
+        rm -f "$PASS_ENC"
+    fi
+done
+
+# ===================================================================================
 # DÉPENDANCES BOOTSTRAP
 # ===================================================================================
-_section "Préparation de L.I.S.A."
+section "Préparation de L.I.S.A."
 
 PKGS_TO_INSTALL=()
 for PKG in tmux jq curl whiptail; do
@@ -194,11 +242,9 @@ done
 echo -e "  Outils système nécessaires :"
 for PKG in tmux jq curl whiptail; do
     if command -v "$PKG" &>/dev/null; then
-        printf "    ${CYAN}•${RESET} %-12s ${GREEN}déjà présent${RESET}
-" "$PKG"
+        printf "    ${CYAN}•${RESET} %-12s ${GREEN}déjà présent${RESET}\n" "$PKG"
     else
-        printf "    ${CYAN}•${RESET} %-12s à installer
-" "$PKG"
+        printf "    ${CYAN}•${RESET} %-12s à installer\n" "$PKG"
     fi
 done
 echo ""
@@ -210,35 +256,36 @@ STEP=0
 
 # Nettoyage cache
 STEP=$((STEP + 1))
-_run "Nettoyage du cache APT"     "echo '$(_get_pass)' | sudo -S apt-get clean -qq 2>/dev/null"     "$TOTAL_STEPS" "$STEP"
+_run "Nettoyage du cache APT" "$TOTAL_STEPS" "$STEP" \
+    bash -c "echo '$(_get_pass)' | sudo -S apt-get clean -qq"
 
 # Mise à jour sources
 STEP=$((STEP + 1))
-_run "Mise à jour des sources de paquets"     "echo '$(_get_pass)' | sudo -S apt-get update -qq"     "$TOTAL_STEPS" "$STEP"
+_run "Mise à jour des sources de paquets" "$TOTAL_STEPS" "$STEP" \
+    bash -c "echo '$(_get_pass)' | sudo -S apt-get update -qq"
 
 # Installation paquets manquants
 for PKG in "${PKGS_TO_INSTALL[@]}"; do
     STEP=$((STEP + 1))
-    _run "Installation de $PKG"         "echo '$(_get_pass)' | sudo -S apt-get install -y $PKG -qq"         "$TOTAL_STEPS" "$STEP"
+    _run "Installation de $PKG" "$TOTAL_STEPS" "$STEP" \
+        bash -c "echo '$(_get_pass)' | sudo -S apt-get install -y $PKG -qq"
 done
 
+# ===================================================================================
 # VÉRIFICATION ET AJOUT SUDOERS
 # ===================================================================================
 if ! echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
     _msg "Droits administrateur requis" \
-"Votre compte ($USER) n'a pas les droits administrateur.
+"Votre compte ($USER) n'a pas les droits admin.
+L.I.S.A. va tenter de vous ajouter.
+Le mot de passe root est nécessaire."
 
-L.I.S.A. va tenter de vous ajouter automatiquement.
-Le mot de passe du compte root est nécessaire."
-
-    ROOT_PASS=""
     _password "Compte root" "Mot de passe root" ROOT_PASS
 
     if echo "$ROOT_PASS" | su -c "usermod -aG sudo $USER && echo OK" root 2>/dev/null | grep -q "OK"; then
         unset ROOT_PASS
         echo "SUDO_ADDED" > "$STATE_FILE"
 
-        # Reprise automatique après reconnexion
         if ! grep -q "LISA_SUDO_RESUME" "$HOME/.bashrc" 2>/dev/null; then
             cat >> "$HOME/.bashrc" << 'BASHRC'
 
@@ -263,7 +310,6 @@ BASHRC
         echo -e "${YELLOW}  → L'installation reprendra automatiquement.${RESET}"
         echo -e "${RED}  La session se ferme dans 10 secondes...${RESET}"
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-
         sleep 10
         rm -f "$PASS_ENC" "$PASS_KEY"
         kill -HUP "$PPID" 2>/dev/null || logout 2>/dev/null || exit 0
@@ -271,17 +317,15 @@ BASHRC
         unset ROOT_PASS
         rm -f "$PASS_ENC" "$PASS_KEY"
         _msg "Erreur" \
-"Impossible d'ajouter $USER aux administrateurs.
-
-Demandez à votre administrateur d'exécuter :
+"Impossible d'ajouter $USER aux admins.
+Demandez à votre admin d'exécuter :
   sudo usermod -aG sudo $USER
-
 Puis relancez L.I.S.A."
         exit 1
     fi
 fi
 
-# Keepalive sudo (stdin redirigé pour ne pas capturer les saisies)
+# Keepalive sudo
 (while [ -f "$PASS_KEY" ]; do
     echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1
     sleep 240
@@ -290,20 +334,16 @@ SUDO_KEEPALIVE_PID=$!
 echo "$SUDO_KEEPALIVE_PID" > "$STACK_DIR/.sudo_keepalive.pid"
 
 # ===================================================================================
-# CLÉ DE CHIFFREMENT OPENSSL (AES-256 — sans dépendance GPG)
+# CLÉ DE CHIFFREMENT OPENSSL
 # ===================================================================================
-# Génération d'une clé symétrique dédiée au chiffrement du .env
-# Stockée séparément du .env — transparente pour l'utilisateur
 ENV_KEY_FILE="$STACK_DIR/.env.key"
 if [ ! -f "$ENV_KEY_FILE" ]; then
     openssl rand -hex 32 > "$ENV_KEY_FILE"
     chmod 600 "$ENV_KEY_FILE"
 fi
-ENV_KEY=$(cat "$ENV_KEY_FILE")
-
 
 # ===================================================================================
-# ÉCRITURE PARTIELLE lisa.conf (section système)
+# ÉCRITURE PARTIELLE lisa.conf
 # ===================================================================================
 cat > "$CONF_FILE" << EOF
 # L.I.S.A. — Configuration générée le $(date '+%Y-%m-%d %H:%M:%S')
@@ -326,5 +366,4 @@ EOF
 echo "SYSTEM_DONE" > "$STATE_FILE"
 kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
 
-# Passage au script suivant
 exec bash "$STACK_DIR/01_config.sh"
