@@ -1,0 +1,64 @@
+{
+  "llm": [
+    { "id": "openai",       "name": "OpenAI",            "aliases": ["open ai", "openai", "gpt", "chatgpt"],                     "key_format": "sk-...",         "url": "https://platform.openai.com/api-keys" },
+    { "id": "anthropic",    "name": "Anthropic",         "aliases": ["anthropic", "claude", "claud"],                             "key_format": "sk-ant-...",     "url": "https://console.anthropic.com/" },
+    { "id": "mistral",      "name": "Mistral AI",        "aliases": ["mistral", "mistral ai", "mistral-ai"],                      "key_format": "...",            "url": "https://console.mistral.ai/" },
+    { "id": "groq",         "name": "Groq",              "aliases": ["groq", "grok"],                                             "key_format": "gsk_...",        "url": "https://console.groq.com/" },
+    { "id": "cohere",       "name": "Cohere",            "aliases": ["cohere", "cohère", "cohere ai"],                            "key_format": "...",            "url": "https://dashboard.cohere.com/" },
+    { "id": "together",     "name": "Together AI",       "aliases": ["together", "together ai", "togetherai"],                    "key_format": "...",            "url": "https://api.together.xyz/" },
+    { "id": "perplexity",   "name": "Perplexity",        "aliases": ["perplexity", "perplexité", "pplx"],                         "key_format": "pplx-...",       "url": "https://www.perplexity.ai/settings/api" },
+    { "id": "deepseek",     "name": "DeepSeek",          "aliases": ["deepseek", "deep seek", "deepsek"],                         "key_format": "sk-...",         "url": "https://platform.deepseek.com/" },
+    { "id": "huggingface",  "name": "HuggingFace",       "aliases": ["huggingface", "hugging face", "hf", "hugging-face"],        "key_format": "hf_...",         "url": "https://huggingface.co/settings/tokens" },
+    { "id": "replicate",    "name": "Replicate",         "aliases": ["replicate", "réplicate"],                                   "key_format": "r8_...",         "url": "https://replicate.com/account/api-tokens" },
+    { "id": "fireworks",    "name": "Fireworks AI",      "aliases": ["fireworks", "fireworks ai"],                                "key_format": "fw_...",         "url": "https://fireworks.ai/" },
+    { "id": "openrouter",   "name": "OpenRouter",        "aliases": ["openrouter", "open router"],                                "key_format": "sk-or-...",      "url": "https://openrouter.ai/keys" },
+    { "id": "google",       "name": "Google Gemini",     "aliases": ["google", "gemini", "google gemini", "bard"],                "key_format": "AIza...",        "url": "https://aistudio.google.com/app/apikey" },
+    { "id": "xai",          "name": "xAI (Grok)",        "aliases": ["xai", "x ai", "grok", "x.ai"],                             "key_format": "xai-...",        "url": "https://x.ai/api" },
+    { "id": "azure",        "name": "Azure OpenAI",      "aliases": ["azure", "azure openai", "microsoft azure"],                 "key_format": "...",            "url": "https://portal.azure.com/" }
+  ],
+  "stt": [
+    { "id": "openai_whisper","name": "OpenAI Whisper API","aliases": ["openai whisper", "whisper api", "whisper"],                "key_format": "sk-...",         "url": "https://platform.openai.com/api-keys" },
+    { "id": "deepgram",     "name": "Deepgram",          "aliases": ["deepgram", "deep gram"],                                    "key_format": "...",            "url": "https://console.deepgram.com/" },
+    { "id": "assemblyai",   "name": "AssemblyAI",        "aliases": ["assemblyai", "assembly ai", "assembly"],                   "key_format": "...",            "url": "https://www.assemblyai.com/dashboard" },
+    { "id": "rev",          "name": "Rev AI",            "aliases": ["rev", "rev ai", "revai"],                                   "key_format": "...",            "url": "https://www.rev.ai/" },
+    { "id": "speechmatics", "name": "Speechmatics",      "aliases": ["speechmatics", "speech matics"],                           "key_format": "...",            "url": "https://portal.speechmatics.com/" }
+  ],
+  "tts": [
+    { "id": "elevenlabs",   "name": "ElevenLabs",        "aliases": ["elevenlabs", "eleven labs", "11labs", "eleven"],            "key_format": "...",            "url": "https://elevenlabs.io/app/settings/api-keys" },
+    { "id": "openai_tts",   "name": "OpenAI TTS",        "aliases": ["openai tts", "openai voice"],                              "key_format": "sk-...",         "url": "https://platform.openai.com/api-keys" },
+    { "id": "google_tts",   "name": "Google Cloud TTS",  "aliases": ["google tts", "google cloud tts", "google voice"],          "key_format": "...",            "url": "https://console.cloud.google.com/" },
+    { "id": "azure_tts",    "name": "Azure TTS",         "aliases": ["azure tts", "microsoft tts", "azure speech"],              "key_format": "...",            "url": "https://portal.azure.com/" },
+    { "id": "playht",       "name": "Play.ht",           "aliases": ["playht", "play ht", "play.ht"],                            "key_format": "...",            "url": "https://play.ht/studio/api-access" }
+  ],
+  "rag": [
+    { "id": "pinecone",     "name": "Pinecone",          "aliases": ["pinecone", "pine cone"],                                    "key_format": "...",            "url": "https://app.pinecone.io/" },
+    { "id": "weaviate",     "name": "Weaviate Cloud",    "aliases": ["weaviate", "weaviate cloud"],                               "key_format": "...",            "url": "https://console.weaviate.cloud/" },
+    { "id": "cohere_embed", "name": "Cohere Embeddings", "aliases": ["cohere embed", "cohere embeddings"],                        "key_format": "...",            "url": "https://dashboard.cohere.com/" }
+  ],
+  "search": [
+    { "id": "serpapi",      "name": "SerpAPI",           "aliases": ["serpapi", "serp api", "serp"],                              "key_format": "...",            "url": "https://serpapi.com/dashboard" },
+    { "id": "brave",        "name": "Brave Search",      "aliases": ["brave", "brave search"],                                    "key_format": "BSA...",         "url": "https://api.search.brave.com/" },
+    { "id": "tavily",       "name": "Tavily",            "aliases": ["tavily", "tavilli"],                                        "key_format": "tvly-...",       "url": "https://tavily.com/" }
+  ],
+  "domotique": [
+    { "id": "homeassistant","name": "Home Assistant",    "aliases": ["home assistant", "homeassistant", "hass"],                  "key_format": "...",            "url": "http://homeassistant.local:8123/profile" },
+    { "id": "jeedom",       "name": "Jeedom",            "aliases": ["jeedom", "jédom"],                                          "key_format": "...",            "url": "" },
+    { "id": "philips_hue",  "name": "Philips Hue",       "aliases": ["philips hue", "hue", "philips"],                            "key_format": "...",            "url": "https://developers.meethue.com/" },
+    { "id": "tuya",         "name": "Tuya",              "aliases": ["tuya", "smart life"],                                       "key_format": "...",            "url": "https://iot.tuya.com/" }
+  ],
+  "meteo": [
+    { "id": "openweather",  "name": "OpenWeatherMap",    "aliases": ["openweather", "open weather", "openweathermap"],            "key_format": "...",            "url": "https://openweathermap.org/api" },
+    { "id": "weatherapi",   "name": "WeatherAPI",        "aliases": ["weatherapi", "weather api"],                                "key_format": "...",            "url": "https://www.weatherapi.com/" },
+    { "id": "meteofrance",  "name": "Météo France",      "aliases": ["meteo france", "météo france", "meteofrance"],              "key_format": "...",            "url": "https://portail-api.meteofrance.fr/" }
+  ],
+  "calendrier": [
+    { "id": "google_cal",   "name": "Google Calendar",   "aliases": ["google calendar", "google cal", "gcal"],                   "key_format": "...",            "url": "https://console.cloud.google.com/" },
+    { "id": "microsoft_cal","name": "Microsoft Calendar", "aliases": ["microsoft calendar", "outlook calendar", "microsoft 365"], "key_format": "...",            "url": "https://portal.azure.com/" }
+  ],
+  "notifications": [
+    { "id": "pushover",     "name": "Pushover",          "aliases": ["pushover", "push over"],                                    "key_format": "...",            "url": "https://pushover.net/api" },
+    { "id": "ntfy",         "name": "ntfy",              "aliases": ["ntfy", "ntfy.sh"],                                          "key_format": "...",            "url": "https://ntfy.sh/" },
+    { "id": "discord",      "name": "Discord Webhook",   "aliases": ["discord", "discord webhook"],                              "key_format": "...",            "url": "https://discord.com/developers" },
+    { "id": "telegram",     "name": "Telegram Bot",      "aliases": ["telegram", "telegram bot"],                                 "key_format": "...",            "url": "https://core.telegram.org/bots" }
+  ]
+}
