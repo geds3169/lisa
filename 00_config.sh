@@ -288,7 +288,8 @@ _progress() {
         local BAR=""
         for ((i=0; i<FILLED; i++)); do BAR+="█"; done
         for ((i=0; i<EMPTY; i++)); do BAR+="░"; done
-        printf "${BLUE}[%3d%%]${RESET} ${BAR} %s" "$PCT" "$LABEL"
+        printf "
+${BLUE}[%3d%%]${RESET} ${BAR} %s" "$PCT" "$LABEL"
         [ "$PCT" -eq 100 ] && echo ""
     fi
 }
@@ -301,24 +302,23 @@ _progress_step() {
 }
 
 # --- Mise à jour de la liste des paquets ---
-if ! $USE_WHIPTAIL; then
-    echo ""
-    echo -e "${CYAN}  Préparation de L.I.S.A.${RESET}"
-    echo -e "${MAGENTA}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-fi
+echo ""
+echo -e "${CYAN}  Préparation de L.I.S.A.${RESET}"
+echo -e "${MAGENTA}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo ""
 
-(
-    echo 0
-    echo "XXXMise à jour des sources de paquets...XXX"
-    echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null
-    echo 100
-) | {
-    if $USE_WHIPTAIL; then
-        whiptail --title "Préparation de L.I.S.A."             --gauge "Mise à jour des sources de paquets..." 8 60 0
-    else
-        _progress_step "Mise à jour des sources de paquets..."
-    fi
-}
+if $USE_WHIPTAIL; then
+    (
+        echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null
+        echo 100
+    ) | whiptail --title "Préparation de L.I.S.A."         --gauge "Mise à jour des sources de paquets..." 8 60 0
+else
+    printf "  ${BLUE}[    ]${RESET} %-50s" "Mise à jour des sources de paquets..."
+    echo "$(_get_pass)" | sudo -S apt-get update -qq 2>/dev/null         && printf "  ${GREEN}[ OK ]${RESET}
+"         || printf "  ${RED}[FAIL]${RESET}
+"
+fi
+CURRENT_STEP=$((CURRENT_STEP + 1))
 
 # --- Installation des paquets ---
 for i in "${!PKGS_TO_INSTALL[@]}"; do
@@ -332,7 +332,8 @@ for i in "${!PKGS_TO_INSTALL[@]}"; do
             echo "$PCT" | whiptail --title "Préparation de L.I.S.A."                 --gauge "$LABEL — déjà présent" 8 60 0
             sleep 0.3
         else
-            printf "${GREEN}[ OK ]${RESET} %-50s
+            printf "
+${GREEN}[ OK ]${RESET} %-50s
 " "$LABEL"
         fi
     else
@@ -345,8 +346,10 @@ for i in "${!PKGS_TO_INSTALL[@]}"; do
             ) | whiptail --title "Préparation de L.I.S.A."                 --gauge "Installation : $LABEL" 8 60 "$PCT"
         else
             printf "  ${BLUE}[    ]${RESET} %-50s" "$LABEL"
-            echo "$(_get_pass)" | sudo -S apt-get install -y "$PKG" -qq 2>/dev/null                 && printf "  ${GREEN}[ OK ]${RESET}
-"                 || printf "  ${RED}[FAIL]${RESET}
+            echo "$(_get_pass)" | sudo -S apt-get install -y "$PKG" -qq 2>/dev/null                 && printf "
+  ${GREEN}[ OK ]${RESET}
+"                 || printf "
+  ${RED}[FAIL]${RESET}
 "
             CURRENT_STEP=$((CURRENT_STEP + 1))
         fi
