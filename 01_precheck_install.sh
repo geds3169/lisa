@@ -25,7 +25,8 @@ PASS_KEY="$STACK_DIR/.lisa_pass.key"
 SNAPSHOT_FILE="$STACK_DIR/.docker_snapshot"
 LOG_FILE="$STACK_DIR/lisa_install.log"
 
-exec >> "$LOG_FILE" 2>&1
+# Log sans rediriger stdout
+_log() { echo "[$(date +%H:%M:%S)] $*" >> "$LOG_FILE" 2>/dev/null; }
 
 # ===================================================================================
 # VÉRIFICATIONS PRÉALABLES
@@ -57,7 +58,7 @@ _sudo() { echo "$(_get_pass)" | sudo -S "$@" 2>/dev/null; }
 (while [ -f "$PASS_KEY" ]; do
     _sudo -v &>/dev/null
     sleep 240
-done) &
+done) </dev/null &
 SUDO_KEEPALIVE_PID=$!
 echo "$SUDO_KEEPALIVE_PID" > "$STACK_DIR/.sudo_keepalive.pid"
 
@@ -165,12 +166,14 @@ else
     _sudo apt-get install -y ca-certificates curl gnupg -qq
 
     _sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-        _sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg 2>/dev/null
+    echo "$(_get_pass)" | sudo -S gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.gpg 2>/dev/null
+    rm -f /tmp/docker.gpg
     _sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
     DISTRO_ID=$(. /etc/os-release && echo "$ID")
-    DISTRO_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+    # Ubuntu 22.04+ utilise UBUNTU_CODENAME, Debian utilise VERSION_CODENAME
+    DISTRO_CODENAME=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
 
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" | \

@@ -15,9 +15,9 @@ RESET="\033[0m"
 info()    { echo -e "${BLUE}[INFO]${RESET} $1"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET} $1"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $1"; }
-success() { echo -e "${GREEN}[OK]${RESET} $1"; }
 section() {
-    echo -e "\n${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo -e "${CYAN}  $1${RESET}"
     echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo ""
@@ -31,44 +31,22 @@ PASS_KEY="$STACK_DIR/.lisa_pass.key"
 LOG_FILE="$STACK_DIR/lisa_install.log"
 
 mkdir -p "$STACK_DIR"
-# Logging dans fichier sans toucher stdout/stdin
-_log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE" 2>/dev/null; }
-_log_cmd() {
-    # Exécuter une commande et logger sa sortie sans toucher stdout
-    "$@" >> "$LOG_FILE" 2>&1
-    return $?
-}
 
 # ===================================================================================
-# MODE RECONFIGURE
+# TRAP
 # ===================================================================================
-if [[ "$1" == "--reconfigure" ]]; then
-    warn "Mode reconfiguration — la configuration existante sera remplacée."
-    echo -ne "${YELLOW}[?]${RESET} Confirmer ? [o/N] : " ; read -r RECONF
-    [[ ! "$RECONF" =~ ^[Oo]$ ]] && { info "Annulé." ; exit 0; }
-    rm -f "$CONF_FILE" "$STACK_DIR/.env.gpg" "$STACK_DIR/.env.plain"
-    sed -i '/LISA_AUTO_RESUME\|LISA_SUDO_RESUME/,/^fi$/d' "$HOME/.bashrc" 2>/dev/null
-fi
-
-# ===================================================================================
-# TRAP — nettoyage centralisé
-# ===================================================================================
-INHIBIT_PID=""
 SUDO_KEEPALIVE_PID=""
 
 _trap_cleanup() {
     local EXIT_CODE=$?
     [ "$EXIT_CODE" -eq 0 ] && return
     echo ""
-    echo -e "\033[1;31m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[1;31m  L.I.S.A. — Interruption détectée\033[0m"
-    echo -e "\033[1;31m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[1;31m  L.I.S.A. — Interruption détectée — nettoyage...\033[0m"
     [ -n "$SUDO_KEEPALIVE_PID" ] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
-    [ -n "$INHIBIT_PID" ] && kill "$INHIBIT_PID" 2>/dev/null
     if [ -f "$STACK_DIR/lisa_cleanup.sh" ]; then
-        bash "$STACK_DIR/lisa_cleanup.sh" "interruption configuration"
+        bash "$STACK_DIR/lisa_cleanup.sh" "interruption"
     else
-        rm -f "$PASS_ENC" "$PASS_KEY" "$STACK_DIR/.env.plain"
+        rm -f "$PASS_ENC" "$PASS_KEY" "$STACK_DIR/.env.plain" "$STACK_DIR/.env.key"
         rm -rf "$STACK_DIR"
     fi
     exit 1
@@ -77,9 +55,19 @@ trap '_trap_cleanup' EXIT
 trap 'exit 1' INT TERM
 
 # ===================================================================================
-# HELPERS AFFICHAGE TERMINAL
+# MODE RECONFIGURE
 # ===================================================================================
+if [[ "$1" == "--reconfigure" ]]; then
+    warn "Reconfiguration — la configuration existante sera remplacée."
+    echo -ne "${YELLOW}[?]${RESET} Confirmer ? [o/N] : " ; read -r RECONF
+    [[ ! "$RECONF" =~ ^[Oo]$ ]] && { info "Annulé." ; exit 0; }
+    rm -f "$CONF_FILE" "$STACK_DIR/.env.gpg" "$STACK_DIR/.env.plain" "$STACK_DIR/.env.key"
+    sed -i '/LISA_AUTO_RESUME\|LISA_SUDO_RESUME/,/^fi$/d' "$HOME/.bashrc" 2>/dev/null
+fi
 
+# ===================================================================================
+# HELPERS
+# ===================================================================================
 _msg() {
     echo ""
     echo -e "${CYAN}  ┌─────────────────────────────────────────────────┐${RESET}"
@@ -136,49 +124,166 @@ _run() {
     local PCT=$(( STEP * 100 / TOTAL ))
     local BAR
     BAR=$(_bar "$PCT")
-
-    # Afficher immédiatement sur stdout (pas de tee qui bufferise)
     printf "  [ >> ]  %-40s  %3d%%  %s\n" "$LABEL" "$PCT" "$BAR"
-
     local PASS
     PASS=$(_get_pass)
-    # Logger uniquement vers le fichier — stdout reste propre
     echo "$PASS" | sudo -S "${@:4}" >> "$LOG_FILE" 2>&1
     local RC=$?
     unset PASS
-
     if [ $RC -eq 0 ]; then
         printf "  [ OK ]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
     else
         printf "  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
-        echo ""
-        error "Echec : $LABEL — details : $LOG_FILE"
+        error "Echec : $LABEL"
+        error "Détails : $LOG_FILE"
         exit 1
     fi
 }
 
-# Nettoyage cache + mise à jour sources + installation
+# ===================================================================================
+# DÉTECTION ARCHITECTURE
+# ===================================================================================
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)        PLATFORM="linux/amd64" ; ARCH_LABEL="x86_64 (AMD64)" ;;
+    aarch64|arm64) PLATFORM="linux/arm64" ; ARCH_LABEL="ARM64" ;;
+    *)
+        error "Architecture $ARCH non supportée. x86_64 et ARM64 uniquement."
+        exit 1 ;;
+esac
+
+[[ "$(uname -s)" != "Linux" ]] && { error "L.I.S.A. requiert Linux." ; exit 1; }
+
+OS_NAME="Inconnue"
+[ -f /etc/os-release ] && . /etc/os-release && OS_NAME="$PRETTY_NAME"
+
+# Vérification openssl
+if ! command -v openssl &>/dev/null; then
+    echo ""
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${RED}  Outil manquant : openssl${RESET}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    echo -e "  openssl est nécessaire pour protéger vos données."
+    echo -e "  Installez-le avec cette commande :"
+    echo ""
+    echo -e "  ${GREEN}sudo apt-get update && sudo apt-get install -y openssl${RESET}"
+    echo ""
+    echo -e "  Puis relancez : ${GREEN}bash install.sh${RESET}"
+    echo ""
+    exit 1
+fi
+
+# ===================================================================================
+# DÉTECTION RESSOURCES
+# ===================================================================================
+CPU_CORES=$(nproc)
+RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+RAM_GB=$((RAM_KB / 1024 / 1024))
+DISK_FREE=$(df -BG "$HOME" | awk 'NR==2{print $4}' | tr -d 'G')
+
+if [ "$RAM_GB" -lt 4 ]; then
+    error "RAM insuffisante : ${RAM_GB}GB. Minimum requis : 4GB." ; exit 1
+fi
+
+if   [ "$RAM_GB" -lt 8  ]; then RAM_PROFILE="low"    ; LLM_MODEL_LOCAL="phi3"
+elif [ "$RAM_GB" -lt 16 ]; then RAM_PROFILE="medium"  ; LLM_MODEL_LOCAL="llama3.2"
+else                             RAM_PROFILE="high"    ; LLM_MODEL_LOCAL="llama3.1:8b"
+fi
+
+GPU_TYPE="none" ; GPU_LABEL="Aucun — mode CPU"
+if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+    GPU_LABEL=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+    GPU_TYPE="nvidia"
+elif lspci 2>/dev/null | grep -qi "amd\|radeon"; then
+    GPU_LABEL="AMD GPU (CPU fallback)" ; GPU_TYPE="amd"
+fi
+
+[ "$DISK_FREE" -lt 20 ] && warn "Espace disque faible (${DISK_FREE}GB). Minimum recommandé : 20GB."
+
+# ===================================================================================
+# MOT DE PASSE SYSTÈME
+# ===================================================================================
+section "Authentification"
+
+echo -e "  L.I.S.A. a besoin de votre mot de passe pour :"
+echo -e "    ${BLUE}•${RESET} Installer Docker et les outils système"
+echo -e "    ${BLUE}•${RESET} Configurer le pare-feu"
+echo -e "    ${BLUE}•${RESET} Vous ajouter au groupe Docker"
+echo ""
+echo -e "  ${YELLOW}Votre mot de passe est chiffré localement et supprimé${RESET}"
+echo -e "  ${YELLOW}automatiquement à la fin de l'installation.${RESET}"
+echo ""
+
+EPHEMERAL_KEY=$(openssl rand -hex 32)
+echo "$EPHEMERAL_KEY" > "$PASS_KEY"
+chmod 600 "$PASS_KEY"
+
+_get_pass() {
+    openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:"$(cat "$PASS_KEY")" -in "$PASS_ENC" 2>/dev/null
+}
+
+while true; do
+    _password "Authentification" "Votre mot de passe de session Linux" SYS_PASS
+    echo "$SYS_PASS" | openssl enc -aes-256-cbc -pbkdf2 \
+        -pass pass:"$EPHEMERAL_KEY" -out "$PASS_ENC" 2>/dev/null
+    chmod 600 "$PASS_ENC"
+    unset SYS_PASS
+    if echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
+        echo -e "  ${GREEN}[ OK ]${RESET}  Authentification validée\n"
+        break
+    else
+        echo -e "  ${RED}  Mot de passe incorrect, réessayez.${RESET}\n"
+        rm -f "$PASS_ENC"
+    fi
+done
+
+# ===================================================================================
+# DÉPENDANCES BOOTSTRAP
+# ===================================================================================
+section "Préparation de L.I.S.A."
+
+PKGS_ALL=(tmux jq curl)
+PKGS_LABELS=(
+    "tmux — gestionnaire de sessions terminal"
+    "jq   — traitement JSON"
+    "curl — téléchargements"
+)
+
+echo -e "  Vérification des outils nécessaires :\n"
+PKGS_TO_INSTALL=()
+for i in "${!PKGS_ALL[@]}"; do
+    PKG="${PKGS_ALL[$i]}"
+    LABEL="${PKGS_LABELS[$i]}"
+    if command -v "$PKG" &>/dev/null; then
+        printf "    ${GREEN}[ OK ]${RESET}  %-44s ${GREEN}déjà présent${RESET}\n\n" "$LABEL"
+    else
+        printf "    ${YELLOW}[----]${RESET}  %-44s ${YELLOW}à installer${RESET}\n\n" "$LABEL"
+        PKGS_TO_INSTALL+=("$PKG")
+    fi
+done
+
+echo -e "  ${MAGENTA}────────────────────────────────────────────────────${RESET}\n"
+
 TOTAL_STEPS=$(( ${#PKGS_TO_INSTALL[@]} + 2 ))
 STEP=0
 
-
-# Nettoyage cache
 STEP=$((STEP + 1))
 _run "Nettoyage du cache APT" "$TOTAL_STEPS" "$STEP" \
     apt-get clean -qq
 
-# Mise à jour sources
 STEP=$((STEP + 1))
 _run "Mise à jour des sources de paquets" "$TOTAL_STEPS" "$STEP" \
     apt-get update -qq
 
-# Installation séquentielle des paquets manquants
 for PKG in "${PKGS_TO_INSTALL[@]}"; do
     STEP=$((STEP + 1))
     _run "Installation de $PKG" "$TOTAL_STEPS" "$STEP" \
         apt-get install -y "$PKG" -qq
 done
 
+# ===================================================================================
 # VÉRIFICATION ET AJOUT SUDOERS
 # ===================================================================================
 if ! echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
