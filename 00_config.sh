@@ -127,20 +127,34 @@ _run() {
     local LABEL="$1"
     local TOTAL="${2:-1}"
     local STEP="${3:-1}"
-    shift 3
     local PCT=$(( STEP * 100 / TOTAL ))
     local BAR
     BAR=$(_bar "$PCT")
+
     printf "  ${BLUE}[ .. ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s" "$LABEL" "$PCT" "$BAR"
-    if "$@" >> "$LOG_FILE" 2>&1; then
-        printf "\r  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
-        return 0
+
+    # Exécution avec sudo via stdin
+    local PASS
+    PASS=$(_get_pass)
+    echo "$PASS" | sudo -S "${@:4}" >> "$LOG_FILE" 2>&1
+    local RC=$?
+    unset PASS
+
+    if [ $RC -eq 0 ]; then
+        printf "
+  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
+
+" "$LABEL" "$PCT" "$BAR"
     else
-        printf "\r  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        printf "
+  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s
+
+" "$LABEL" "$PCT" "$BAR"
         error "Échec : $LABEL — consultez $LOG_FILE"
         exit 1
     fi
 }
+
 
 # ===================================================================================
 # DÉTECTION ARCHITECTURE
@@ -162,6 +176,26 @@ fi
 
 OS_NAME="Inconnue"
 [ -f /etc/os-release ] && . /etc/os-release && OS_NAME="$PRETTY_NAME"
+
+# Vérification openssl (requis pour le chiffrement des secrets)
+if ! command -v openssl &>/dev/null; then
+    echo ""
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo -e "${RED}  Outil manquant : openssl${RESET}"
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    echo -e "  openssl est nécessaire pour protéger vos données."
+    echo -e "  Il n'est pas présent sur ce système."
+    echo ""
+    echo -e "  Installez-le en copiant cette commande dans votre terminal :"
+    echo ""
+    echo -e "  ${GREEN}sudo apt-get update && sudo apt-get install -y openssl${RESET}"
+    echo ""
+    echo -e "  Puis relancez L.I.S.A. avec :"
+    echo -e "  ${GREEN}bash install.sh${RESET}"
+    echo ""
+    exit 1
+fi
 
 # ===================================================================================
 # DÉTECTION RESSOURCES
@@ -230,48 +264,96 @@ while true; do
 done
 
 # ===================================================================================
+# ===================================================================================
 # DÉPENDANCES BOOTSTRAP
 # ===================================================================================
 section "Préparation de L.I.S.A."
 
-PKGS_TO_INSTALL=()
-for PKG in tmux jq curl whiptail; do
-    command -v "$PKG" &>/dev/null || PKGS_TO_INSTALL+=("$PKG")
-done
+PKGS_ALL=(tmux jq curl)
+PKGS_LABELS=(
+    "tmux — gestionnaire de sessions terminal"
+    "jq   — traitement JSON"
+    "curl — téléchargements"
+)
 
-echo -e "  Outils système nécessaires :"
-for PKG in tmux jq curl whiptail; do
+# Détection de ce qui est présent ou manquant
+echo -e "  Vérification des outils nécessaires :\n"
+PKGS_TO_INSTALL=()
+for i in "${!PKGS_ALL[@]}"; do
+    PKG="${PKGS_ALL[$i]}"
+    LABEL="${PKGS_LABELS[$i]}"
     if command -v "$PKG" &>/dev/null; then
-        printf "    ${CYAN}•${RESET} %-12s ${GREEN}déjà présent${RESET}\n" "$PKG"
+        printf "    ${GREEN}[ OK ]${RESET}  %-44s ${GREEN}déjà présent${RESET}\n\n" "$LABEL"
     else
-        printf "    ${CYAN}•${RESET} %-12s à installer\n" "$PKG"
+        printf "    ${YELLOW}[----]${RESET}  %-44s ${YELLOW}à installer${RESET}\n\n" "$LABEL"
+        PKGS_TO_INSTALL+=("$PKG")
     fi
 done
-echo ""
-echo -e "  ${MAGENTA}────────────────────────────────────────────────────${RESET}"
-echo ""
 
+echo -e "  ${MAGENTA}────────────────────────────────────────────────────${RESET}\n"
+
+# Nettoyage cache + mise à jour sources + installation
 TOTAL_STEPS=$(( ${#PKGS_TO_INSTALL[@]} + 2 ))
 STEP=0
 
+# Fonction animation barre pendant une commande en arrière-plan
+_run_animated() {
+    local LABEL="$1"
+    local TOTAL="$2"
+    local STEP="$3"
+    shift 3
+    local PCT_START=$(( (STEP - 1) * 100 / TOTAL ))
+    local PCT_END=$(( STEP * 100 / TOTAL ))
+    local BAR
+
+    # Lancer la commande en arrière-plan
+    local PASS
+    PASS=$(_get_pass)
+    echo "$PASS" | sudo -S "$@" >> "$LOG_FILE" 2>&1 &
+    local CMD_PID=$!
+    unset PASS
+
+    # Animer la barre pendant l'exécution
+    local PCT=$PCT_START
+    while kill -0 "$CMD_PID" 2>/dev/null; do
+        [ "$PCT" -lt "$PCT_END" ] && PCT=$(( PCT + 1 ))
+        BAR=$(_bar "$PCT")
+        printf "\r  ${BLUE}[ .. ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s" "$LABEL" "$PCT" "$BAR"
+        sleep 0.15
+    done
+
+    # Attendre la fin et récupérer le code retour
+    wait "$CMD_PID"
+    local RC=$?
+
+    PCT=$PCT_END
+    BAR=$(_bar "$PCT")
+    if [ $RC -eq 0 ]; then
+        printf "\r  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
+    else
+        printf "\r  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        error "Échec : $LABEL — consultez $LOG_FILE"
+        exit 1
+    fi
+}
+
 # Nettoyage cache
 STEP=$((STEP + 1))
-_run "Nettoyage du cache APT" "$TOTAL_STEPS" "$STEP" \
-    bash -c "echo '$(_get_pass)' | sudo -S apt-get clean -qq"
+_run_animated "Nettoyage du cache APT" "$TOTAL_STEPS" "$STEP" \
+    apt-get clean -qq
 
 # Mise à jour sources
 STEP=$((STEP + 1))
-_run "Mise à jour des sources de paquets" "$TOTAL_STEPS" "$STEP" \
-    bash -c "echo '$(_get_pass)' | sudo -S apt-get update -qq"
+_run_animated "Mise à jour des sources de paquets" "$TOTAL_STEPS" "$STEP" \
+    apt-get update -qq
 
-# Installation paquets manquants
+# Installation séquentielle des paquets manquants
 for PKG in "${PKGS_TO_INSTALL[@]}"; do
     STEP=$((STEP + 1))
-    _run "Installation de $PKG" "$TOTAL_STEPS" "$STEP" \
-        bash -c "echo '$(_get_pass)' | sudo -S apt-get install -y $PKG -qq"
+    _run_animated "Installation de $PKG" "$TOTAL_STEPS" "$STEP" \
+        apt-get install -y "$PKG" -qq
 done
 
-# ===================================================================================
 # VÉRIFICATION ET AJOUT SUDOERS
 # ===================================================================================
 if ! echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
