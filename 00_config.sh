@@ -31,7 +31,13 @@ PASS_KEY="$STACK_DIR/.lisa_pass.key"
 LOG_FILE="$STACK_DIR/lisa_install.log"
 
 mkdir -p "$STACK_DIR"
-exec > >(tee -a "$LOG_FILE") 2>&1
+# Logging dans fichier sans toucher stdout/stdin
+_log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE" 2>/dev/null; }
+_log_cmd() {
+    # Exécuter une commande et logger sa sortie sans toucher stdout
+    "$@" >> "$LOG_FILE" 2>&1
+    return $?
+}
 
 # ===================================================================================
 # MODE RECONFIGURE
@@ -131,10 +137,12 @@ _run() {
     local BAR
     BAR=$(_bar "$PCT")
 
+    # Afficher immédiatement sur stdout (pas de tee qui bufferise)
     printf "  [ >> ]  %-40s  %3d%%  %s\n" "$LABEL" "$PCT" "$BAR"
 
     local PASS
     PASS=$(_get_pass)
+    # Logger uniquement vers le fichier — stdout reste propre
     echo "$PASS" | sudo -S "${@:4}" >> "$LOG_FILE" 2>&1
     local RC=$?
     unset PASS
@@ -144,8 +152,7 @@ _run() {
     else
         printf "  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
         echo ""
-        error "Echec : $LABEL"
-        error "Consultez $LOG_FILE pour les details."
+        error "Echec : $LABEL — details : $LOG_FILE"
         exit 1
     fi
 }
@@ -154,46 +161,6 @@ _run() {
 TOTAL_STEPS=$(( ${#PKGS_TO_INSTALL[@]} + 2 ))
 STEP=0
 
-# Fonction animation barre pendant une commande en arrière-plan
-_run() {
-    local LABEL="$1"
-    local TOTAL="$2"
-    local STEP="$3"
-    shift 3
-    local PCT_START=$(( (STEP - 1) * 100 / TOTAL ))
-    local PCT_END=$(( STEP * 100 / TOTAL ))
-    local BAR
-
-    # Lancer la commande en arrière-plan
-    local PASS
-    PASS=$(_get_pass)
-    echo "$PASS" | sudo -S "$@" >> "$LOG_FILE" 2>&1 &
-    local CMD_PID=$!
-    unset PASS
-
-    # Animer la barre pendant l'exécution
-    local PCT=$PCT_START
-    while kill -0 "$CMD_PID" 2>/dev/null; do
-        [ "$PCT" -lt "$PCT_END" ] && PCT=$(( PCT + 1 ))
-        BAR=$(_bar "$PCT")
-        printf "\r  ${BLUE}[ .. ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s" "$LABEL" "$PCT" "$BAR"
-        sleep 0.15
-    done
-
-    # Attendre la fin et récupérer le code retour
-    wait "$CMD_PID"
-    local RC=$?
-
-    PCT=$PCT_END
-    BAR=$(_bar "$PCT")
-    if [ $RC -eq 0 ]; then
-        printf "\r  ${GREEN}[ OK ]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
-    else
-        printf "\r  ${RED}[FAIL]${RESET}  %-45s ${BLUE}%3d%%${RESET}  %s\n\n" "$LABEL" "$PCT" "$BAR"
-        error "Échec : $LABEL — consultez $LOG_FILE"
-        exit 1
-    fi
-}
 
 # Nettoyage cache
 STEP=$((STEP + 1))
