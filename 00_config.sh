@@ -254,20 +254,43 @@ _get_pass() {
         -pass pass:"$(cat "$PASS_KEY")" -in "$PASS_ENC" 2>/dev/null
 }
 
+ATTEMPTS=0
+MAX_ATTEMPTS=5
 while true; do
+    ATTEMPTS=$((ATTEMPTS + 1))
+    if [ "$ATTEMPTS" -gt "$MAX_ATTEMPTS" ]; then
+        echo ""
+        error "Trop de tentatives ($MAX_ATTEMPTS). Installation annulée."
+        exit 1
+    fi
+
+    [ "$ATTEMPTS" -gt 1 ] &&         echo -e "  ${YELLOW}Tentative $ATTEMPTS/$MAX_ATTEMPTS${RESET}"
+
     _password "Authentification" "Votre mot de passe de session Linux" SYS_PASS
-    echo "$SYS_PASS" | openssl enc -aes-256-cbc -pbkdf2 \
-        -pass pass:"$EPHEMERAL_KEY" -out "$PASS_ENC" 2>/dev/null
+
+    if [ -z "$SYS_PASS" ]; then
+        echo -e "  ${RED}  Mot de passe vide — veuillez saisir votre mot de passe.${RESET}
+"
+        ATTEMPTS=$((ATTEMPTS - 1))
+        continue
+    fi
+
+    echo "$SYS_PASS" | openssl enc -aes-256-cbc -pbkdf2         -pass pass:"$EPHEMERAL_KEY" -out "$PASS_ENC" 2>/dev/null
     chmod 600 "$PASS_ENC"
     unset SYS_PASS
+
     if echo "$(_get_pass)" | sudo -S -v &>/dev/null 2>&1; then
-        echo -e "  ${GREEN}[ OK ]${RESET}  Authentification validée\n"
+        echo -e "  ${GREEN}[ OK ]${RESET}  Authentification validée
+"
         break
     else
-        echo -e "  ${RED}  Mot de passe incorrect, réessayez.${RESET}\n"
+        echo -e "  ${RED}  Mot de passe incorrect. Réessayez ($ATTEMPTS/$MAX_ATTEMPTS).${RESET}
+"
         rm -f "$PASS_ENC"
     fi
 done
+unset ATTEMPTS
+
 
 # ===================================================================================
 # DÉPENDANCES BOOTSTRAP
@@ -304,8 +327,61 @@ _run "Nettoyage du cache APT" "$TOTAL_STEPS" "$STEP" \
     apt-get clean -qq
 
 STEP=$((STEP + 1))
-_run "Mise à jour des sources de paquets" "$TOTAL_STEPS" "$STEP" \
-    apt-get update -qq
+# Mise à jour sources avec détection et correction automatique des sources corrompues
+{
+    PCT=$(( STEP * 100 / TOTAL_STEPS ))
+    BAR=$(_bar "$PCT")
+    BAR_DONE=$(_bar 100)
+
+    printf "  [|]  %-40s  %3d%%  %s" "Mise à jour des sources de paquets" "$PCT" "$BAR"
+
+    PASS=$(_get_pass)
+    APT_OUT=$(echo "$PASS" | sudo -S apt-get update -qq 2>&1)
+    APT_RC=$?
+    unset PASS
+
+    if [ $APT_RC -ne 0 ]; then
+        if echo "$APT_OUT" | grep -q "mal form\|malformed"; then
+            printf "
+  [FIX]  %-40s  %3d%%  %s
+"                 "Correction des sources corrompues..." "$PCT" "$BAR"
+
+            # Supprimer les sources corrompues détectées dans le message
+            PASS=$(_get_pass)
+            while IFS= read -r LINE; do
+                CORRUPT=$(echo "$LINE" | grep -oP "/etc/apt/sources\.list\.d/\S+(?=\s)")
+                [ -n "$CORRUPT" ] && echo "$PASS" | sudo -S rm -f "$CORRUPT" 2>/dev/null                     && warn "  Source supprimée : $CORRUPT"
+            done <<< "$APT_OUT"
+            # Supprimer docker.list corrompu dans tous les cas
+            echo "$PASS" | sudo -S rm -f /etc/apt/sources.list.d/docker.list 2>/dev/null
+            unset PASS
+
+            # Réessayer
+            printf "  [|]  %-40s  %3d%%  %s" "Mise à jour des sources de paquets" "$PCT" "$BAR"
+            PASS=$(_get_pass)
+            echo "$PASS" | sudo -S apt-get update -qq >> "$LOG_FILE" 2>&1
+            APT_RC=$?
+            unset PASS
+        fi
+    fi
+
+    if [ $APT_RC -eq 0 ]; then
+        printf "
+  [ OK ]  %-40s  100%%  %s
+
+" "Mise à jour des sources de paquets" "$BAR_DONE"
+    else
+        printf "
+  [FAIL]  %-40s  100%%  %s
+
+" "Mise à jour des sources de paquets" "$BAR_DONE"
+        echo "$APT_OUT" >> "$LOG_FILE"
+        error "Echec : Mise à jour des sources de paquets"
+        error "Détails : $LOG_FILE"
+        exit 1
+    fi
+}
+
 
 for PKG in "${PKGS_TO_INSTALL[@]}"; do
     STEP=$((STEP + 1))

@@ -252,11 +252,27 @@ Si non, elle restera accessible uniquement chez vous."; then
 
             while true; do
                 _password "Token DuckDNS" "Collez votre token DuckDNS" DUCKDNS_TOKEN
+
+                # Vérifier que le token n'est pas vide
+                if [ -z "$DUCKDNS_TOKEN" ]; then
+                    warn "  Token vide — veuillez coller votre token DuckDNS."
+                    continue
+                fi
+
                 TOKEN_LEN=${#DUCKDNS_TOKEN}
+
+                # Un token DuckDNS fait 36 caractères (format UUID)
+                if [ "$TOKEN_LEN" -lt 10 ]; then
+                    warn "  Token trop court ($TOKEN_LEN caractères) — vérifiez votre copie."
+                    DUCKDNS_TOKEN=""
+                    continue
+                fi
+
                 TOKEN_PREVIEW="${DUCKDNS_TOKEN:0:8}****-****-${DUCKDNS_TOKEN: -4}"
                 echo ""
                 echo -e "  Token saisi : ${CYAN}${TOKEN_PREVIEW}${RESET} (${TOKEN_LEN} caractères)"
                 if _yesno "Vérification token" "C'est correct ?"; then break; fi
+                DUCKDNS_TOKEN=""
             done
 
             _demander_domaine ".duckdns.org" "duckdns"

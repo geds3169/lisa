@@ -169,10 +169,16 @@ else
     _sudo apt-get update -qq
     _sudo apt-get install -y ca-certificates curl gnupg -qq
 
+    # Supprimer les fichiers existants pour éviter les corruptions
+    echo "$(_get_pass)" | sudo -S rm -f /etc/apt/sources.list.d/docker.list 2>/dev/null
+    echo "$(_get_pass)" | sudo -S rm -f /etc/apt/keyrings/docker.gpg 2>/dev/null
+
     _sudo install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg 2>/dev/null
     echo "$(_get_pass)" | sudo -S gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.gpg 2>/dev/null
     rm -f /tmp/docker.gpg
+    _trace "file" "/etc/apt/sources.list.d/docker.list"
+    _trace "file" "/etc/apt/keyrings/docker.gpg"
     _sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
     DISTRO_ID=$(. /etc/os-release && echo "$ID")

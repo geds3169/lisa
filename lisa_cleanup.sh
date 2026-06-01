@@ -45,7 +45,8 @@ if [ ! -f "$TRACE_FILE" ]; then
     exit 0
 fi
 
-# Sauvegarder le log avant suppression
+# Sauvegarder le log IMMÉDIATEMENT dans le home — avant tout nettoyage
+LOG_BACKUP=""
 if [ -f "$LOG_FILE" ]; then
     LOG_BACKUP="$HOME/lisa_install_$(date '+%Y%m%d_%H%M%S').log"
     cp "$LOG_FILE" "$LOG_BACKUP"
@@ -105,6 +106,12 @@ tac "$TRACE_FILE" 2>/dev/null | while IFS='|' read -r TYPE VALUE; do
             # On ne désinstalle pas les paquets apt — trop risqué
             info "  Paquet apt         : $VALUE conservé"
             ;;
+        apt_source)
+            if [ -f "$VALUE" ]; then
+                rm -f "$VALUE"
+                info "  Source APT supprimée : $VALUE"
+            fi
+            ;;
         bashrc)
             sed -i "/${VALUE}/,/^fi$/d" "$HOME/.bashrc" 2>/dev/null
             info "  .bashrc nettoyé    : $VALUE"
@@ -136,7 +143,7 @@ find "$HOME" -maxdepth 3 -name "install.sh" 2>/dev/null | xargs rm -f 2>/dev/nul
 pkill -f "systemd-inhibit.*LISA" 2>/dev/null || true
 
 # Supprimer uniquement le fichier de trace
-# Le log est conservé pour diagnostic
+# Le log backup ($LOG_BACKUP) est intentionnellement conservé
 rm -f "$TRACE_FILE"
 success "Fichier de trace supprimé."
 
@@ -144,13 +151,15 @@ echo ""
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo -e "${YELLOW}  Nettoyage terminé.${RESET}"
 echo ""
-if [ -f "$LOG_BACKUP" ]; then
-echo -e "${CYAN}  Un log de diagnostic a été conservé :${RESET}"
-echo -e "${BLUE}  $LOG_BACKUP${RESET}"
-echo -e "${CYAN}  Vous pouvez le consulter pour comprendre l'erreur,${RESET}"
-echo -e "${CYAN}  puis le supprimer avec :${RESET}"
-echo -e "${GREEN}  rm $LOG_BACKUP${RESET}"
-echo ""
+if [ -n "$LOG_BACKUP" ] && [ -f "$LOG_BACKUP" ]; then
+    echo -e "${CYAN}  Un log de diagnostic a été conservé :${RESET}"
+    echo -e "${BLUE}  $LOG_BACKUP${RESET}"
+    echo -e "${CYAN}  Consultez-le pour comprendre l'erreur :${RESET}"
+    echo -e "${GREEN}  cat $LOG_BACKUP${RESET}"
+    echo ""
+    echo -e "${CYAN}  Pour le supprimer ensuite :${RESET}"
+    echo -e "${GREEN}  rm $LOG_BACKUP${RESET}"
+    echo ""
 fi
 echo -e "${YELLOW}  Pour relancer L.I.S.A. :${RESET}"
 echo -e "${GREEN}  curl -fsSL https://raw.githubusercontent.com/geds3169/lisa/main/install.sh -o install.sh && bash install.sh${RESET}"
