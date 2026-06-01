@@ -165,56 +165,48 @@ if command -v docker &>/dev/null; then
         _sudo apt-get install -y docker-compose-plugin -qq && success "Plugin Docker Compose v2 installé."
     fi
 else
-    info "Installation de Docker (méthode officielle)..."
-    _sudo apt-get update -qq
-    _sudo apt-get install -y ca-certificates curl gnupg -qq
-
-    # Supprimer les fichiers existants pour éviter les corruptions
-    echo "$(_get_pass)" | sudo -S rm -f /etc/apt/sources.list.d/docker.list 2>/dev/null
-    echo "$(_get_pass)" | sudo -S rm -f /etc/apt/keyrings/docker.gpg 2>/dev/null
-
-    _sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg 2>/dev/null
-    echo "$(_get_pass)" | sudo -S gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.gpg 2>/dev/null
-    rm -f /tmp/docker.gpg
-    _trace "file" "/etc/apt/sources.list.d/docker.list"
-    _trace "file" "/etc/apt/keyrings/docker.gpg"
-    _sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
     DISTRO_ID=$(. /etc/os-release && echo "$ID")
-    # Ubuntu 22.04+ utilise UBUNTU_CODENAME, Debian utilise VERSION_CODENAME
     DISTRO_CODENAME=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
 
-    # Docker ne supporte pas encore Debian Trixie (13) — fallback sur bookworm
+    # Debian Trixie (13) — docker.io depuis les repos Debian officiels
     if [ "$DISTRO_ID" = "debian" ] && [ "$DISTRO_CODENAME" = "trixie" ]; then
-        warn "Debian Trixie non supporté officiellement par Docker — utilisation du repo bookworm."
-        DISTRO_CODENAME="bookworm"
-    fi
-    # Vérifier que le repo Docker existe pour cette distribution
-    REPO_URL="https://download.docker.com/linux/${DISTRO_ID}/dists/${DISTRO_CODENAME}"
-    if ! curl -fsSL "$REPO_URL" &>/dev/null; then
-        error "Le repo Docker n'existe pas pour ${DISTRO_ID} ${DISTRO_CODENAME}."
-        error "Consultez https://docs.docker.com/engine/install/ pour votre distribution."
-        exit 1
+        info "Debian Trixie détecté — installation via repos Debian officiels..."
+        _sudo apt-get install -y docker.io docker-compose docker-buildx -qq
+        _trace "apt" "docker.io"
+        _trace "apt" "docker-compose"
+        _trace "apt" "docker-buildx"
+    else
+        # Méthode officielle Docker pour Ubuntu et Debian stable
+        info "Installation de Docker (méthode officielle)..."
+        _sudo apt-get install -y ca-certificates curl gnupg -qq
+
+        echo "$(_get_pass)" | sudo -S rm -f /etc/apt/sources.list.d/docker.list 2>/dev/null
+        echo "$(_get_pass)" | sudo -S rm -f /etc/apt/keyrings/docker.gpg 2>/dev/null
+
+        _sudo install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL "https://download.docker.com/linux/${DISTRO_ID}/gpg" -o /tmp/docker.gpg 2>/dev/null
+        echo "$(_get_pass)" | sudo -S gpg --yes --dearmor             -o /etc/apt/keyrings/docker.gpg < /tmp/docker.gpg 2>/dev/null
+        rm -f /tmp/docker.gpg
+        _trace "file" "/etc/apt/sources.list.d/docker.list"
+        _trace "file" "/etc/apt/keyrings/docker.gpg"
+        _sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" |             _sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+        _sudo apt-get update -qq
+        _sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin -qq
+        _trace "apt" "docker-ce"
+        _trace "apt" "docker-ce-cli"
+        _trace "apt" "containerd.io"
+        _trace "apt" "docker-compose-plugin"
     fi
 
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" | \
-        _sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    _sudo apt-get update -qq
-    _sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin -qq
     if ! command -v docker &>/dev/null; then
         error "Installation Docker échouée — docker introuvable après installation."
         error "Vérifiez votre connexion internet et relancez L.I.S.A."
         exit 1
     fi
-    _trace "apt" "docker-ce"
-    _trace "apt" "docker-ce-cli"
-    _trace "apt" "containerd.io"
-    _trace "apt" "docker-compose-plugin"
-    success "Docker et Docker Compose v2 installés."
-fi
+    success "Docker installé : $(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ',')"
 
 # Démarrer Docker dans tous les cas (installé maintenant ou déjà présent)
 _sudo systemctl enable docker 2>/dev/null || true

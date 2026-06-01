@@ -120,32 +120,17 @@ _bar() {
     printf "[%s]" "$B"
 }
 
-_spinner() {
-    local LABEL="$1"
-    local PCT="$2"
-    local BAR
-    BAR=$(_bar "$PCT")
-    local FRAMES=('|' '/' '-' '\\')
-    local i=0
-    while true; do
-        printf "\r  [%s]  %-40s  %3d%%  %s" "${FRAMES[$((i % 4))]}" "$LABEL" "$PCT" "$BAR"
-        sleep 0.15
-        i=$((i+1))
-    done
-}
-
 _run() {
     local LABEL="$1"
     local TOTAL="${2:-1}"
     local STEP="${3:-1}"
     local PCT=$(( STEP * 100 / TOTAL ))
-    local BAR_RUNNING BAR_DONE
-    BAR_RUNNING=$(_bar "$PCT")
+    local BAR_DONE
     BAR_DONE=$(_bar 100)
 
-    # Spinner avec barre courante pendant l'exécution
-    _spinner "$LABEL" "$PCT" &
-    local SPINNER_PID=$!
+    # Afficher en cours sur nouvelle ligne
+    printf "  [ .. ]  %-40s  %3d%%  %s
+" "$LABEL" "$PCT" "$(_bar $PCT)"
 
     local PASS
     PASS=$(_get_pass)
@@ -153,14 +138,14 @@ _run() {
     local RC=$?
     unset PASS
 
-    kill "$SPINNER_PID" 2>/dev/null
-    wait "$SPINNER_PID" 2>/dev/null
-
     if [ $RC -eq 0 ]; then
-        # Toujours afficher 100% quand c'est terminé
-        printf "\r  [ OK ]  %-40s  100%%  %s\n\n" "$LABEL" "$BAR_DONE"
+        printf "  [ OK ]  %-40s  100%%  %s
+
+" "$LABEL" "$BAR_DONE"
     else
-        printf "\r  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR_RUNNING"
+        printf "  [FAIL]  %-40s  %3d%%  %s
+
+" "$LABEL" "$PCT" "$(_bar $PCT)"
         error "Echec : $LABEL"
         error "Détails : $LOG_FILE"
         exit 1
