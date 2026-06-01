@@ -196,17 +196,20 @@ https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" | \
     _trace "apt" "containerd.io"
     _trace "apt" "docker-compose-plugin"
 
-    # Démarrer et activer Docker
-    _sudo systemctl enable docker 2>/dev/null || true
-    _sudo systemctl start docker 2>/dev/null || true
-
-    # Attendre que le groupe docker soit créé (max 10s)
-    for i in $(seq 1 10); do
-        getent group docker &>/dev/null && break
-        sleep 1
-    done
     success "Docker et Docker Compose v2 installés."
 fi
+
+# Démarrer Docker dans tous les cas (installé maintenant ou déjà présent)
+_sudo systemctl enable docker 2>/dev/null || true
+_sudo systemctl start docker 2>/dev/null || true
+
+# Attendre que le groupe docker soit créé (max 15s)
+info "Démarrage du service Docker..."
+for i in $(seq 1 15); do
+    getent group docker &>/dev/null && break
+    sleep 1
+done
+getent group docker &>/dev/null && success "Service Docker actif." ||     warn "Groupe docker non détecté — poursuite quand même."
 
 # ===================================================================================
 # GROUPE DOCKER
