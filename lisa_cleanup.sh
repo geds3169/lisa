@@ -70,8 +70,15 @@ tac "$TRACE_FILE" 2>/dev/null | while IFS='|' read -r TYPE VALUE; do
     case "$TYPE" in
         file)
             if [ -f "$VALUE" ]; then
-                rm -f "$VALUE"
-                info "  Fichier supprimé   : $VALUE"
+                # Utiliser sudo pour les fichiers système (/etc/...)
+                if [[ "$VALUE" == /etc/* ]]; then
+                    PASS=$(_get_pass 2>/dev/null)
+                    echo "$PASS" | sudo -S rm -f "$VALUE" 2>/dev/null &&                         info "  Fichier supprimé   : $VALUE" ||                         warn "  Impossible de supprimer : $VALUE"
+                    unset PASS
+                else
+                    rm -f "$VALUE" 2>/dev/null
+                    info "  Fichier supprimé   : $VALUE"
+                fi
             fi
             ;;
         dir)
