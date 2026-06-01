@@ -213,8 +213,16 @@ fi
 # ===================================================================================
 section "Groupe Docker"
 
-if getent group docker | grep -qw "$USER"; then
-    success "Utilisateur $USER déjà dans le groupe docker."
+# Si on revient ici après DOCKER_GROUP_ADDED, passer directement à la suite
+CURRENT_STATE=$(cat "$STATE_FILE" 2>/dev/null)
+if [ "$CURRENT_STATE" = "DOCKER_GROUP_ADDED" ]; then
+    info "Groupe docker déjà configuré — passage à la suite."
+    # Mettre à jour l'état pour ne plus reboucler
+    echo "DOCKER_DONE" > "$STATE_FILE"
+fi
+
+if getent group docker | grep -qw "$USER" || [ "$CURRENT_STATE" = "DOCKER_GROUP_ADDED" ]; then
+    success "Utilisateur $USER dans le groupe docker."
 else
     info "Ajout de $USER au groupe docker..."
     _sudo usermod -aG docker "$USER"
