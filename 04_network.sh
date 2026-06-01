@@ -1,8 +1,7 @@
 #!/bin/bash
 # ===================================================================================
 # L.I.S.A — 04_network.sh
-# Caddy (reverse proxy + TLS auto), DuckDNS DDNS, Authelia
-# Appelé par 03_run_stack.sh si EXPOSE_INTERNET=true
+# Caddy (domaine unique + chemins), DuckDNS DDNS, Authelia
 # ===================================================================================
 
 RED="\033[1;31m"
@@ -23,143 +22,122 @@ CONF_FILE="$STACK_DIR/lisa.conf"
 STATE_FILE="$STACK_DIR/.lisa_state"
 LOG_FILE="$STACK_DIR/lisa_install.log"
 
-exec >> "$LOG_FILE" 2>&1
-
 [ ! -f "$CONF_FILE" ] && { error "lisa.conf introuvable."; exit 1; }
 source "$CONF_FILE"
 
-# --- Décryptage token DuckDNS si besoin ---
-_get_pass() { openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:"$(cat "$STACK_DIR/.lisa_pass.key")" -in "$STACK_DIR/.lisa_pass.gpg" 2>/dev/null; }
-_sudo() { echo "$(_get_pass)" | sudo -S "$@" 2>/dev/null; }
+_get_pass() {
+    openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:"$(cat "$STACK_DIR/.lisa_pass.key")" \
+        -in "$STACK_DIR/.lisa_pass.gpg" 2>/dev/null
+}
 
-# Récupération token DuckDNS depuis .env.gpg (chiffré AES-256)
+# Récupération token DuckDNS depuis .env.gpg
 DUCKDNS_TOKEN=""
 ENV_KEY=$(cat "$STACK_DIR/.env.key" 2>/dev/null)
 if [ -f "$STACK_DIR/.env.gpg" ] && [ -n "$ENV_KEY" ]; then
-    DUCKDNS_TOKEN=$(openssl enc -d -aes-256-cbc -pbkdf2         -pass pass:"$ENV_KEY" -in "$STACK_DIR/.env.gpg" 2>/dev/null         | grep "^DUCKDNS_TOKEN=" | cut -d'=' -f2-)
+    DUCKDNS_TOKEN=$(openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:"$ENV_KEY" -in "$STACK_DIR/.env.gpg" 2>/dev/null \
+        | grep "^DUCKDNS_TOKEN=" | cut -d'=' -f2-)
+fi
+
+AUTHELIA_PASS=""
+if [ -f "$STACK_DIR/.env.gpg" ] && [ -n "$ENV_KEY" ]; then
+    AUTHELIA_PASS=$(openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:"$ENV_KEY" -in "$STACK_DIR/.env.gpg" 2>/dev/null \
+        | grep "^AUTHELIA_PASS=" | cut -d'=' -f2-)
 fi
 
 # ===================================================================================
-# GÉNÉRATION CADDYFILE
+# GÉNÉRATION CADDYFILE — domaine unique, services par chemin
 # ===================================================================================
 section "Génération du Caddyfile"
 
-_get_domain() {
-    local SVC="$1"
-    case "$SVC" in
-        api)    echo "${SUBDOMAIN_API:-localhost}" ;;
-        llm)    echo "${SUBDOMAIN_LLM:-localhost}" ;;
-        stt)    echo "${SUBDOMAIN_STT:-localhost}" ;;
-        tts)    echo "${SUBDOMAIN_TTS:-localhost}" ;;
-        rag)    echo "${SUBDOMAIN_RAG:-localhost}" ;;
-        search) echo "${SUBDOMAIN_SEARCH:-localhost}" ;;
-        *)      echo "localhost" ;;
-    esac
-}
+mkdir -p "$STACK_DIR/caddy"
 
 AUTHELIA_SNIPPET=""
 if [ "$AUTHELIA_ENABLED" = "true" ]; then
-    AUTHELIA_SNIPPET='
+    AUTHELIA_SNIPPET="
     forward_auth authelia:9091 {
-        uri /api/verify?rd=https://${SUBDOMAIN_API}
+        uri /api/verify?rd=https://${LISA_DOMAIN}
         copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
-    }'
+    }"
 fi
 
-{
-cat << CADDYEOF
+cat > "$STACK_DIR/caddy/Caddyfile" << CADDYEOF
 # L.I.S.A. Caddyfile — généré le $(date '+%Y-%m-%d %H:%M:%S')
-# Modifiable manuellement puis : docker compose restart caddy
+# Domaine unique : ${LISA_DOMAIN}
+# Services accessibles par chemin
 
 {
-    email lisa@localhost
     admin off
+    $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "# DuckDNS DNS challenge géré par le container ddns")
 }
 
-# API principale
-$(_get_domain "api") {
-    tls {
-        $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "dns duckdns $DUCKDNS_TOKEN" || echo "")
-    }
+${LISA_DOMAIN} {
+    $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "tls {
+        dns duckdns $DUCKDNS_TOKEN
+    }")
+
     ${AUTHELIA_SNIPPET}
-    reverse_proxy lisa_api:8000
+
+    # API principale
+    handle /api* {
+        uri strip_prefix /api
+        reverse_proxy lisa_api:8000
+    }
+
+    # LLM (Ollama)
+    handle /llm* {
+        uri strip_prefix /llm
+        reverse_proxy lisa_llm:11434
+    }
+
+    # STT (Whisper)
+    handle /stt* {
+        uri strip_prefix /stt
+        reverse_proxy lisa_stt:8080
+    }
+
+    # TTS (Piper)
+    handle /tts* {
+        uri strip_prefix /tts
+        reverse_proxy lisa_tts:5500
+    }
+
+    # RAG (Qdrant)
+    handle /rag* {
+        uri strip_prefix /rag
+        reverse_proxy lisa_rag:6333
+    }
+
+    # Search (SearXNG)
+    handle /search* {
+        uri strip_prefix /search
+        reverse_proxy lisa_search:8888
+    }
+
+    # Racine → API
+    handle {
+        reverse_proxy lisa_api:8000
+    }
+
     log {
-        output file /var/log/caddy/api.log
+        output file /var/log/caddy/lisa.log
     }
 }
-
-# LLM (Ollama) — accès restreint
-$(_get_domain "llm") {
-    tls {
-        $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "dns duckdns $DUCKDNS_TOKEN" || echo "")
-    }
-    ${AUTHELIA_SNIPPET}
-    reverse_proxy lisa_llm:11434
-}
-
-# STT
-$(_get_domain "stt") {
-    tls {
-        $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "dns duckdns $DUCKDNS_TOKEN" || echo "")
-    }
-    ${AUTHELIA_SNIPPET}
-    reverse_proxy lisa_stt:8080
-}
-
-# TTS
-$(_get_domain "tts") {
-    tls {
-        $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "dns duckdns $DUCKDNS_TOKEN" || echo "")
-    }
-    ${AUTHELIA_SNIPPET}
-    reverse_proxy lisa_tts:5500
-}
-
 CADDYEOF
 
-# RAG conditionnel
-if [ "$RAG_ENABLED" = "true" ]; then
-cat << RAGEOF
-
-# RAG (Qdrant)
-$(_get_domain "rag") {
-    tls {
-        $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "dns duckdns $DUCKDNS_TOKEN" || echo "")
-    }
-    ${AUTHELIA_SNIPPET}
-    reverse_proxy lisa_rag:6333
-}
-RAGEOF
-fi
-
-# SearXNG conditionnel
-if [ "$WEB_SEARCH_ENABLED" = "true" ]; then
-cat << SEARCHEOF
-
-# Search (SearXNG)
-$(_get_domain "search") {
-    tls {
-        $([ "$DOMAIN_TYPE" = "duckdns" ] && echo "dns duckdns $DUCKDNS_TOKEN" || echo "")
-    }
-    ${AUTHELIA_SNIPPET}
-    reverse_proxy lisa_search:8888
-}
-SEARCHEOF
-fi
-
-} > "$STACK_DIR/caddy/Caddyfile"
-
-success "Caddyfile généré."
+success "Caddyfile généré (domaine unique : $LISA_DOMAIN)"
 
 # ===================================================================================
-# CONFIGURATION AUTHELIA
+# AUTHELIA
 # ===================================================================================
 if [ "$AUTHELIA_ENABLED" = "true" ]; then
     section "Configuration Authelia"
 
-    ENV_KEY=$(cat "$STACK_DIR/.env.key" 2>/dev/null)
-    AUTHELIA_PASS=$(openssl enc -d -aes-256-cbc -pbkdf2         -pass pass:"$ENV_KEY" -in "$STACK_DIR/.env.gpg" 2>/dev/null         | grep "^AUTHELIA_PASS=" | cut -d'=' -f2-)
-    AUTHELIA_PASS_HASH=$(docker run --rm authelia/authelia:latest authelia crypto hash generate argon2 --password "$AUTHELIA_PASS" 2>/dev/null | grep "Digest:" | awk '{print $2}')
+    AUTHELIA_PASS_HASH=$(docker run --rm authelia/authelia:latest \
+        authelia crypto hash generate argon2 \
+        --password "$AUTHELIA_PASS" 2>/dev/null | grep "Digest:" | awk '{print $2}')
 
     mkdir -p "$STACK_DIR/authelia"
 
@@ -167,7 +145,7 @@ if [ "$AUTHELIA_ENABLED" = "true" ]; then
 ---
 theme: dark
 jwt_secret: $(openssl rand -hex 32)
-default_redirection_url: https://$(_get_domain "api")
+default_redirection_url: https://${LISA_DOMAIN}
 
 server:
   host: 0.0.0.0
@@ -186,13 +164,7 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
-    - domain:
-        - "$(_get_domain "api")"
-        - "$(_get_domain "llm")"
-        - "$(_get_domain "stt")"
-        - "$(_get_domain "tts")"
-        $([ "$RAG_ENABLED" = "true" ] && echo "- \"$(_get_domain 'rag')\"")
-        $([ "$WEB_SEARCH_ENABLED" = "true" ] && echo "- \"$(_get_domain 'search')\"")
+    - domain: "${LISA_DOMAIN}"
       policy: one_factor
 
 session:
@@ -200,7 +172,7 @@ session:
   secret: $(openssl rand -hex 32)
   expiration: 3600
   inactivity: 300
-  domain: $DOMAIN
+  domain: ${DOMAIN}
 
 storage:
   local:
@@ -226,28 +198,15 @@ USERSEOF
 fi
 
 # ===================================================================================
-# DDNS DUCKDNS — container de mise à jour automatique
+# DDNS DUCKDNS
 # ===================================================================================
 if [ "$DOMAIN_TYPE" = "duckdns" ] && [ -n "$DUCKDNS_TOKEN" ]; then
     section "Configuration DuckDNS DDNS"
 
-    # Liste des sous-domaines à mettre à jour (noms saisis par l'utilisateur, sans .duckdns.org)
-    DUCK_DOMAINS=""
-    for FQDN in "$SUBDOMAIN_API" "$SUBDOMAIN_LLM" "$SUBDOMAIN_STT" "$SUBDOMAIN_TTS"; do
-        NAME="${FQDN%.duckdns.org}"
-        [ -n "$NAME" ] && DUCK_DOMAINS="${DUCK_DOMAINS}${NAME},"
-    done
-    [ "$RAG_ENABLED" = "true" ] && {
-        NAME="${SUBDOMAIN_RAG%.duckdns.org}"
-        DUCK_DOMAINS="${DUCK_DOMAINS}${NAME},"
-    }
-    [ "$WEB_SEARCH_ENABLED" = "true" ] && {
-        NAME="${SUBDOMAIN_SEARCH%.duckdns.org}"
-        DUCK_DOMAINS="${DUCK_DOMAINS}${NAME},"
-    }
-    DUCK_DOMAINS="${DUCK_DOMAINS%,}"  # supprimer la virgule finale
+    # Extraire le nom sans .duckdns.org
+    DUCK_NAME="${LISA_DOMAIN%.duckdns.org}"
 
-    # Ajout du service DDNS au compose existant
+    # Ajouter le service DDNS au compose
     cat >> "$STACK_DIR/docker-compose.yml" << DDNSEOF
 
   ddns:
@@ -256,25 +215,29 @@ if [ "$DOMAIN_TYPE" = "duckdns" ] && [ -n "$DUCKDNS_TOKEN" ]; then
     networks:
       - lisa_external
     environment:
-      - SUBDOMAINS=${DUCK_DOMAINS}
+      - SUBDOMAINS=${DUCK_NAME}
       - TOKEN=${DUCKDNS_TOKEN}
       - LOG_FILE=true
     restart: unless-stopped
     mem_limit: 64m
 DDNSEOF
 
-    # Démarrage du container DDNS
-    docker compose up -d ddns
-    success "Container DDNS DuckDNS démarré."
-    info "Sous-domaines mis à jour : $DUCK_DOMAINS"
+    docker compose -f "$STACK_DIR/docker-compose.yml" up -d ddns 2>/dev/null
+    success "Container DDNS DuckDNS démarré ($DUCK_NAME.duckdns.org)"
 
     # Première mise à jour immédiate
     PUBLIC_IP=$(curl -s https://ifconfig.me 2>/dev/null)
-    UPDATE_RESULT=$(curl -s "https://www.duckdns.org/update?domains=${DUCK_DOMAINS}&token=${DUCKDNS_TOKEN}&ip=${PUBLIC_IP}")
-    if [ "$UPDATE_RESULT" = "OK" ]; then
-        success "IP publique ($PUBLIC_IP) mise à jour sur DuckDNS."
-    else
-        warn "Mise à jour DuckDNS initiale : $UPDATE_RESULT"
+    TEST=$(curl -s "https://www.duckdns.org/update?domains=${DUCK_NAME}&token=${DUCKDNS_TOKEN}&ip=${PUBLIC_IP}")
+    [ "$TEST" = "OK" ] \
+        && success "IP publique ($PUBLIC_IP) mise à jour sur DuckDNS." \
+        || warn "Mise à jour DuckDNS : $TEST"
+
+    # Message si convention non suivie
+    if [ "$NAMING_CONVENTION" = "false" ]; then
+        echo ""
+        warn "Vous n'avez pas suivi la convention de nommage recommandée."
+        warn "En cas d'échec réseau, cela pourrait en être la cause."
+        warn "Convention recommandée : lisa-XXXX.duckdns.org"
     fi
 fi
 
@@ -294,9 +257,9 @@ cd "$STACK_DIR"
 info "Démarrage Caddy..."
 docker compose up -d caddy
 
-# Health check Caddy
 for i in $(seq 1 12); do
-    if curl -sk "https://localhost" >/dev/null 2>&1 || curl -s "http://localhost" >/dev/null 2>&1; then
+    if curl -sk "https://${LISA_DOMAIN}" >/dev/null 2>&1 || \
+       curl -s "http://${LISA_DOMAIN}" >/dev/null 2>&1; then
         success "Caddy opérationnel."
         break
     fi
@@ -308,20 +271,20 @@ done
 # RÉCAP RÉSEAU
 # ===================================================================================
 echo ""
-echo -e "${CYAN}━━━ Accès externes L.I.S.A. ━━━${RESET}"
-for SVC in api llm stt tts; do
-    DOM=$(_get_domain "$SVC")
-    echo -e "  ${GREEN}$SVC${RESET} → ${BLUE}https://$DOM${RESET}"
-done
-[ "$RAG_ENABLED" = "true" ] && echo -e "  ${GREEN}rag${RESET}    → ${BLUE}https://$(_get_domain 'rag')${RESET}"
-[ "$WEB_SEARCH_ENABLED" = "true" ] && echo -e "  ${GREEN}search${RESET} → ${BLUE}https://$(_get_domain 'search')${RESET}"
-[ "$AUTHELIA_ENABLED" = "true" ] && echo -e "\n  ${YELLOW}Authentification requise — utilisateur : ${AUTHELIA_USER:-admin}${RESET}"
-
-if [ "$DOMAIN_TYPE" = "duckdns" ]; then
-    echo ""
+echo -e "${CYAN}━━━ Accès L.I.S.A. depuis internet ━━━${RESET}"
+echo -e "  ${GREEN}Accès principal :${RESET} ${BLUE}https://${LISA_DOMAIN}${RESET}"
+echo -e "  ${GREEN}API             :${RESET} ${BLUE}https://${LISA_DOMAIN}/api${RESET}"
+echo -e "  ${GREEN}Cerveau IA      :${RESET} ${BLUE}https://${LISA_DOMAIN}/llm${RESET}"
+echo -e "  ${GREEN}Voix entrée     :${RESET} ${BLUE}https://${LISA_DOMAIN}/stt${RESET}"
+echo -e "  ${GREEN}Voix sortie     :${RESET} ${BLUE}https://${LISA_DOMAIN}/tts${RESET}"
+echo -e "  ${GREEN}Mémoire         :${RESET} ${BLUE}https://${LISA_DOMAIN}/rag${RESET}"
+echo -e "  ${GREEN}Recherche web   :${RESET} ${BLUE}https://${LISA_DOMAIN}/search${RESET}"
+[ "$AUTHELIA_ENABLED" = "true" ] && \
+    echo -e "\n  ${YELLOW}Authentification requise — utilisateur : ${AUTHELIA_USER:-admin}${RESET}"
+[ "$DOMAIN_TYPE" = "duckdns" ] && \
     warn "DuckDNS : la propagation DNS peut prendre quelques minutes."
-    warn "Si les adresses ne répondent pas immédiatement, attendez 5 minutes."
-fi
+[ "$NAMING_CONVENTION" = "false" ] && \
+    warn "Convention non suivie — en cas d'échec, reconfigurer avec la nomenclature recommandée."
 
 echo "NETWORK_DONE" > "$STATE_FILE"
 success "Configuration réseau terminée."

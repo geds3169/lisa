@@ -117,6 +117,20 @@ _bar() {
     printf "[%s]" "$B"
 }
 
+_spinner() {
+    local LABEL="$1"
+    local PCT="$2"
+    local BAR
+    BAR=$(_bar "$PCT")
+    local FRAMES=('|' '/' '-' '\\')
+    local i=0
+    while true; do
+        printf "\r  [%s]  %-40s  %3d%%  %s" "${FRAMES[$((i % 4))]}" "$LABEL" "$PCT" "$BAR"
+        sleep 0.15
+        i=$((i+1))
+    done
+}
+
 _run() {
     local LABEL="$1"
     local TOTAL="${2:-1}"
@@ -124,21 +138,29 @@ _run() {
     local PCT=$(( STEP * 100 / TOTAL ))
     local BAR
     BAR=$(_bar "$PCT")
-    printf "  [ >> ]  %-40s  %3d%%  %s\n" "$LABEL" "$PCT" "$BAR"
+
+    _spinner "$LABEL" "$PCT" &
+    local SPINNER_PID=$!
+
     local PASS
     PASS=$(_get_pass)
     echo "$PASS" | sudo -S "${@:4}" >> "$LOG_FILE" 2>&1
     local RC=$?
     unset PASS
+
+    kill "$SPINNER_PID" 2>/dev/null
+    wait "$SPINNER_PID" 2>/dev/null
+
     if [ $RC -eq 0 ]; then
-        printf "  [ OK ]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        printf "\r  [ OK ]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
     else
-        printf "  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        printf "\r  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
         error "Echec : $LABEL"
         error "Détails : $LOG_FILE"
         exit 1
     fi
 }
+
 
 # ===================================================================================
 # DÉTECTION ARCHITECTURE
@@ -186,7 +208,7 @@ if [ "$RAM_GB" -lt 4 ]; then
     error "RAM insuffisante : ${RAM_GB}GB. Minimum requis : 4GB." ; exit 1
 fi
 
-if   [ "$RAM_GB" -lt 8  ]; then RAM_PROFILE="low"    ; LLM_MODEL_LOCAL="phi3"
+if   [ "$RAM_GB" -lt 6  ]; then RAM_PROFILE="low"    ; LLM_MODEL_LOCAL="phi3"
 elif [ "$RAM_GB" -lt 16 ]; then RAM_PROFILE="medium"  ; LLM_MODEL_LOCAL="llama3.2"
 else                             RAM_PROFILE="high"    ; LLM_MODEL_LOCAL="llama3.1:8b"
 fi

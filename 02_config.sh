@@ -120,13 +120,8 @@ DUCKDNS_TOKEN=""
 AUTHELIA_ENABLED="false"
 AUTHELIA_USER=""
 AUTHELIA_PASS=""
-
-# Sous-domaines — variables directes (pas de tableau associatif dans sous-fonction)
-SUBDOMAIN_API="" ; SUBDOMAIN_LLM="" ; SUBDOMAIN_STT=""
-SUBDOMAIN_TTS="" ; SUBDOMAIN_RAG="" ; SUBDOMAIN_SEARCH=""
-
-SERVICES=(api llm stt tts rag search)
-SVC_LABELS=("API principale" "Cerveau IA" "Reconnaissance vocale" "Synthèse vocale" "Mémoire documentaire" "Recherche web")
+NAMING_CONVENTION="false"
+LISA_DOMAIN=""  # domaine unique — services accessibles par /api /llm /stt /tts /rag /search
 
 echo -e "  Par défaut, L.I.S.A. est accessible uniquement sur votre réseau local."
 echo -e "  Vous pouvez l'exposer sur internet pour y accéder depuis n'importe où."
@@ -147,81 +142,77 @@ Si non, elle restera accessible uniquement chez vous."; then
         "3" "Autre fournisseur DNS (Cloudflare, OVH...)" \
         "4" "Via mon adresse IP publique directement"
 
-    # Fonction de saisie des sous-domaines (sans tableau associatif)
-    _saisir_subdomain() {
-        local IDX="$1"    # index dans SERVICES
-        local SUFFIX="$2" # .mondomaine.fr ou .duckdns.org
-        local MODE="$3"   # custom ou duckdns
-        local SVC="${SERVICES[$IDX]}"
-        local LABEL="${SVC_LABELS[$IDX]}"
-        local DEFAULT="lisa-${SVC}"
-        [ "$MODE" = "duckdns" ] && DEFAULT="lisa-${SVC}-4827"
-        local INPUT=""
+    # Demander si l'utilisateur suit la nomenclature recommandée
+    # Pour custom/dns : lisa.mondomaine.fr
+    # Pour duckdns    : lisa-XXXX.duckdns.org
+    _demander_domaine() {
+        local SUFFIX="$1"   # .mondomaine.fr ou .duckdns.org
+        local MODE="$2"     # custom ou duckdns
+        local CONFIRMED=false
 
-        while true; do
-            echo -ne "${YELLOW}  [?]${RESET} ${CYAN}${LABEL}${RESET} (ex: ${GREEN}${DEFAULT}${RESET})${SUFFIX} : "
-            read -r INPUT
-            INPUT=$(echo "$INPUT" | tr '[:upper:]' '[:lower:]' \
-                | sed "s|${SUFFIX}||g" | sed 's|^[[:space:]]*||;s|[[:space:]]*$||')
-
-            if [ -z "$INPUT" ] || [[ "$INPUT" == *"XXXX"* ]]; then
-                warn "  Saisissez un nom valide (sans ${SUFFIX} et sans XXXX)."
-                continue
-            fi
-
-            # Validation DuckDNS
-            if [ "$MODE" = "duckdns" ] && [ -n "$DUCKDNS_TOKEN" ]; then
-                local TEST
-                TEST=$(curl -s "https://www.duckdns.org/update?domains=${INPUT}&token=${DUCKDNS_TOKEN}&ip=" 2>/dev/null)
-                if [[ "$TEST" != "OK" ]]; then
-                    warn "  '${INPUT}.duckdns.org' non trouvé sur DuckDNS."
-                    echo -ne "${YELLOW}  [?]${RESET} Corriger ? [O/n] : " ; read -r C ; echo ""
-                    [[ ! "$C" =~ ^[Nn]$ ]] && continue
+        while ! $CONFIRMED; do
+            if [ "$MODE" = "duckdns" ]; then
+                echo ""
+                echo -e "  ${CYAN}Avez-vous utilisé la nomenclature recommandée ?${RESET}"
+                echo -e "  ${GREEN}lisa-XXXX${RESET}.duckdns.org  (ex: lisa-4827.duckdns.org)"
+                echo ""
+                if _yesno "Nomenclature" "Avez-vous nommé votre sous-domaine lisa-XXXX.duckdns.org ?"; then
+                    NAMING_CONVENTION="true"
+                    local SUFFIX_VAL=""
+                    echo -ne "${YELLOW}  [?]${RESET} Votre suffixe numérique (ex: 4827) : "
+                    read -r SUFFIX_VAL
+                    LISA_DOMAIN="lisa-${SUFFIX_VAL}.duckdns.org"
+                    # Validation DuckDNS
+                    local TEST
+                    TEST=$(curl -s "https://www.duckdns.org/update?domains=lisa-${SUFFIX_VAL}&token=${DUCKDNS_TOKEN}&ip=" 2>/dev/null)
+                    if [[ "$TEST" != "OK" ]]; then
+                        warn "  lisa-${SUFFIX_VAL}.duckdns.org non trouvé sur DuckDNS."
+                        echo -ne "${YELLOW}  [?]${RESET} Corriger ? [O/n] : " ; read -r C ; echo ""
+                        [[ ! "$C" =~ ^[Nn]$ ]] && LISA_DOMAIN="" && continue
+                    fi
+                else
+                    NAMING_CONVENTION="false"
+                    local INPUT=""
+                    echo -ne "${YELLOW}  [?]${RESET} Votre sous-domaine DuckDNS (sans .duckdns.org) : "
+                    read -r INPUT
+                    INPUT=$(echo "$INPUT" | tr "[:upper:]" "[:lower:]" | sed "s|.duckdns.org||g" | sed "s|^[[:space:]]*||;s|[[:space:]]*\$||")
+                    LISA_DOMAIN="${INPUT}.duckdns.org"
+                    warn "  Attention : ne pas suivre la convention peut causer des problèmes."
+                fi
+            else
+                echo ""
+                echo -e "  ${CYAN}Avez-vous utilisé la nomenclature recommandée ?${RESET}"
+                echo -e "  ${GREEN}lisa${SUFFIX}${RESET}  (ex: lisa.mondomaine.fr)"
+                echo ""
+                if _yesno "Nomenclature" "Avez-vous créé un sous-domaine 'lisa${SUFFIX}' ?"; then
+                    NAMING_CONVENTION="true"
+                    LISA_DOMAIN="lisa${SUFFIX}"
+                else
+                    NAMING_CONVENTION="false"
+                    local INPUT=""
+                    echo -ne "${YELLOW}  [?]${RESET} Votre sous-domaine (sans ${SUFFIX}) : "
+                    read -r INPUT
+                    INPUT=$(echo "$INPUT" | tr "[:upper:]" "[:lower:]" | sed "s|${SUFFIX}||g" | sed "s|^[[:space:]]*||;s|[[:space:]]*\$||")
+                    LISA_DOMAIN="${INPUT}${SUFFIX}"
+                    warn "  Attention : ne pas suivre la convention peut causer des problèmes."
                 fi
             fi
 
-            # Stocker dans la variable globale correspondante
-            case "$SVC" in
-                api)    SUBDOMAIN_API="${INPUT}${SUFFIX}" ;;
-                llm)    SUBDOMAIN_LLM="${INPUT}${SUFFIX}" ;;
-                stt)    SUBDOMAIN_STT="${INPUT}${SUFFIX}" ;;
-                tts)    SUBDOMAIN_TTS="${INPUT}${SUFFIX}" ;;
-                rag)    SUBDOMAIN_RAG="${INPUT}${SUFFIX}" ;;
-                search) SUBDOMAIN_SEARCH="${INPUT}${SUFFIX}" ;;
-            esac
-            echo -e "    ${BLUE}→ ${INPUT}${SUFFIX}${RESET}\n"
-            break
-        done
-    }
-
-    _saisir_tous_subdomains() {
-        local SUFFIX="$1"
-        local MODE="$2"
-        local CONFIRMED=false
-        while ! $CONFIRMED; do
             echo ""
-            echo -e "  ${CYAN}Renseignez le nom de chaque adresse (partie AVANT ${GREEN}${SUFFIX}${CYAN}) :${RESET}"
-            echo ""
-            for IDX in "${!SERVICES[@]}"; do
-                _saisir_subdomain "$IDX" "$SUFFIX" "$MODE"
-            done
-
-            # Récapitulatif
-            echo ""
-            echo -e "  ${CYAN}━━━ Vos adresses L.I.S.A. ━━━${RESET}"
-            echo -e "    ${BLUE}API    :${RESET} $SUBDOMAIN_API"
-            echo -e "    ${BLUE}LLM    :${RESET} $SUBDOMAIN_LLM"
-            echo -e "    ${BLUE}STT    :${RESET} $SUBDOMAIN_STT"
-            echo -e "    ${BLUE}TTS    :${RESET} $SUBDOMAIN_TTS"
-            echo -e "    ${BLUE}RAG    :${RESET} $SUBDOMAIN_RAG"
-            echo -e "    ${BLUE}Search :${RESET} $SUBDOMAIN_SEARCH"
+            echo -e "  ${CYAN}Vos adresses L.I.S.A. :${RESET}"
+            echo -e "    ${BLUE}Accès principal :${RESET} https://${LISA_DOMAIN}"
+            echo -e "    ${BLUE}API             :${RESET} https://${LISA_DOMAIN}/api"
+            echo -e "    ${BLUE}Cerveau IA      :${RESET} https://${LISA_DOMAIN}/llm"
+            echo -e "    ${BLUE}Voix entrée     :${RESET} https://${LISA_DOMAIN}/stt"
+            echo -e "    ${BLUE}Voix sortie     :${RESET} https://${LISA_DOMAIN}/tts"
+            echo -e "    ${BLUE}Mémoire         :${RESET} https://${LISA_DOMAIN}/rag"
+            echo -e "    ${BLUE}Recherche web   :${RESET} https://${LISA_DOMAIN}/search"
             echo ""
 
             if _yesno "Vérification" "Ces adresses sont-elles correctes ?"; then
                 CONFIRMED=true
             else
-                SUBDOMAIN_API="" ; SUBDOMAIN_LLM="" ; SUBDOMAIN_STT=""
-                SUBDOMAIN_TTS="" ; SUBDOMAIN_RAG="" ; SUBDOMAIN_SEARCH=""
+                LISA_DOMAIN=""
             fi
         done
     }
@@ -230,57 +221,51 @@ Si non, elle restera accessible uniquement chez vous."; then
         1|3)
             [ "$DNS_CHOICE" = "1" ] && TITLE="Domaine personnel" || TITLE="Fournisseur DNS"
             _input "$TITLE" "Votre nom de domaine (ex: mondomaine.fr)" DOMAIN
-            DOMAIN=$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's|^https\?://||')
+            DOMAIN=$(echo "$DOMAIN" | tr "[:upper:]" "[:lower:]" | sed "s|^https\?://||")
             DOMAIN_TYPE="custom"
             echo ""
-            warn "  Vous devrez créer chez votre registrar un enregistrement A :"
+            warn "  Vous devrez créer un enregistrement DNS de type A :"
             echo -e "  ${GREEN}[sous-domaine].${DOMAIN}${RESET}  →  ${GREEN}A${RESET}  →  ${GREEN}${PUBLIC_IP}${RESET}"
             warn "  La propagation DNS peut prendre jusqu'à 24h."
-            echo ""
-            _saisir_tous_subdomains ".$DOMAIN" "custom"
-            echo -ne "  Appuyez sur Entrée une fois vos DNS créés..." ; read -r ; echo ""
+            _demander_domaine ".$DOMAIN" "custom"
+            echo -ne "  Appuyez sur Entrée une fois votre DNS créé..." ; read -r ; echo ""
             ;;
 
         2)
             DOMAIN_TYPE="duckdns"
             DOMAIN="duckdns.org"
             echo ""
-            echo -e "  ${CYAN}DuckDNS — adresses gratuites en *.duckdns.org${RESET}"
+            echo -e "  ${CYAN}DuckDNS — adresse gratuite en *.duckdns.org${RESET}"
             echo ""
             echo -e "  ${BLUE}Étape 1${RESET} — Allez sur ${BLUE}https://www.duckdns.org${RESET}"
             echo -e "           Connectez-vous avec votre compte Google."
             echo ""
-            echo -e "  ${BLUE}Étape 2${RESET} — Créez ${GREEN}${#SERVICES[@]} sous-domaines${RESET}, un par service."
-            echo -e "           Exemple : ${GREEN}lisa-api-4827${RESET}.duckdns.org"
-            echo -e "           Remplacez 4827 par vos propres chiffres."
+            echo -e "  ${BLUE}Étape 2${RESET} — Créez ${GREEN}1 seul sous-domaine${RESET} pour L.I.S.A."
+            echo -e "           Nomenclature recommandée : ${GREEN}lisa-XXXX${RESET}.duckdns.org"
+            echo -e "           Remplacez XXXX par vos propres chiffres (ex: 4827)."
             echo -e "           Si le nom est pris, essayez d'autres chiffres."
             echo ""
             echo -e "  ${BLUE}Étape 3${RESET} — Copiez votre ${GREEN}token${RESET} depuis le tableau de bord."
             echo ""
             command -v xdg-open &>/dev/null && xdg-open "https://www.duckdns.org" &>/dev/null &
-            echo -ne "  Appuyez sur Entrée une fois vos sous-domaines créés..." ; read -r ; echo ""
+            echo -ne "  Appuyez sur Entrée une fois votre sous-domaine créé..." ; read -r ; echo ""
 
-            # Saisie token avec confirmation
             while true; do
                 _password "Token DuckDNS" "Collez votre token DuckDNS" DUCKDNS_TOKEN
                 TOKEN_LEN=${#DUCKDNS_TOKEN}
                 TOKEN_PREVIEW="${DUCKDNS_TOKEN:0:8}****-****-${DUCKDNS_TOKEN: -4}"
                 echo ""
                 echo -e "  Token saisi : ${CYAN}${TOKEN_PREVIEW}${RESET} (${TOKEN_LEN} caractères)"
-                if _yesno "Vérification token" "C'est correct ?"; then
-                    break
-                fi
+                if _yesno "Vérification token" "C'est correct ?"; then break; fi
             done
 
-            _saisir_tous_subdomains ".duckdns.org" "duckdns"
+            _demander_domaine ".duckdns.org" "duckdns"
             ;;
 
         4)
             DOMAIN_TYPE="ip"
             DOMAIN="$PUBLIC_IP"
-            SUBDOMAIN_API="$PUBLIC_IP" ; SUBDOMAIN_LLM="$PUBLIC_IP"
-            SUBDOMAIN_STT="$PUBLIC_IP" ; SUBDOMAIN_TTS="$PUBLIC_IP"
-            SUBDOMAIN_RAG="$PUBLIC_IP" ; SUBDOMAIN_SEARCH="$PUBLIC_IP"
+            LISA_DOMAIN="$PUBLIC_IP"
             warn "  Accès par IP — les navigateurs afficheront un avertissement de sécurité."
             ;;
 
@@ -312,6 +297,7 @@ Si non, elle restera accessible uniquement chez vous."; then
         fi
     fi
 fi
+
 
 # ===================================================================================
 # RÉCAPITULATIF GLOBAL
@@ -345,7 +331,10 @@ while ! $CONFIRMED; do
     echo -e "  ${CYAN}Réseau${RESET}"
     if [ "$EXPOSE_INTERNET" = "true" ]; then
         echo -e "    Accès internet  : ${GREEN}oui${RESET}"
-        [ -n "$SUBDOMAIN_API" ] && echo -e "    API             : ${BLUE}$SUBDOMAIN_API${RESET}"
+        [ -n "$LISA_DOMAIN" ] && echo -e "    Adresse         : ${BLUE}https://$LISA_DOMAIN${RESET}"
+        [ "$NAMING_CONVENTION" = "true" ] \
+            && echo -e "    Convention      : ${GREEN}suivie${RESET}" \
+            || echo -e "    Convention      : ${YELLOW}non suivie${RESET}"
         [ "$AUTHELIA_ENABLED" = "true" ] \
             && echo -e "    Protection      : ${GREEN}oui ($AUTHELIA_USER)${RESET}" \
             || echo -e "    Protection      : non"
@@ -377,8 +366,7 @@ while ! $CONFIRMED; do
         3)
             EXPOSE_INTERNET="false" ; DOMAIN_TYPE="none" ; DOMAIN=""
             DUCKDNS_TOKEN="" ; AUTHELIA_ENABLED="false"
-            SUBDOMAIN_API="" ; SUBDOMAIN_LLM="" ; SUBDOMAIN_STT=""
-            SUBDOMAIN_TTS="" ; SUBDOMAIN_RAG="" ; SUBDOMAIN_SEARCH=""
+            LISA_DOMAIN="" ; NAMING_CONVENTION="false"
             exec bash "$STACK_DIR/02_config.sh"
             ;;
         4)
@@ -412,15 +400,11 @@ cat >> "$CONF_FILE" << EOF
 EXPOSE_INTERNET="$EXPOSE_INTERNET"
 DOMAIN_TYPE="$DOMAIN_TYPE"
 DOMAIN="$DOMAIN"
+LISA_DOMAIN="$LISA_DOMAIN"
+NAMING_CONVENTION="$NAMING_CONVENTION"
 DUCKDNS_TOKEN_SET="$([ -n "$DUCKDNS_TOKEN" ] && echo true || echo false)"
 AUTHELIA_ENABLED="$AUTHELIA_ENABLED"
 AUTHELIA_USER="${AUTHELIA_USER:-}"
-SUBDOMAIN_API="$SUBDOMAIN_API"
-SUBDOMAIN_LLM="$SUBDOMAIN_LLM"
-SUBDOMAIN_STT="$SUBDOMAIN_STT"
-SUBDOMAIN_TTS="$SUBDOMAIN_TTS"
-SUBDOMAIN_RAG="$SUBDOMAIN_RAG"
-SUBDOMAIN_SEARCH="$SUBDOMAIN_SEARCH"
 
 # Secrets : $STACK_DIR/.env.gpg (AES-256)
 # Déchiffrement : openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:\$(cat $STACK_DIR/.env.key) -in $STACK_DIR/.env.gpg
