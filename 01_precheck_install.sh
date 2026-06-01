@@ -185,17 +185,34 @@ else
     # Ubuntu 22.04+ utilise UBUNTU_CODENAME, Debian utilise VERSION_CODENAME
     DISTRO_CODENAME=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
 
+    # Docker ne supporte pas encore Debian Trixie (13) — fallback sur bookworm
+    if [ "$DISTRO_ID" = "debian" ] && [ "$DISTRO_CODENAME" = "trixie" ]; then
+        warn "Debian Trixie non supporté officiellement par Docker — utilisation du repo bookworm."
+        DISTRO_CODENAME="bookworm"
+    fi
+    # Vérifier que le repo Docker existe pour cette distribution
+    REPO_URL="https://download.docker.com/linux/${DISTRO_ID}/dists/${DISTRO_CODENAME}"
+    if ! curl -fsSL "$REPO_URL" &>/dev/null; then
+        error "Le repo Docker n'existe pas pour ${DISTRO_ID} ${DISTRO_CODENAME}."
+        error "Consultez https://docs.docker.com/engine/install/ pour votre distribution."
+        exit 1
+    fi
+
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" | \
         _sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     _sudo apt-get update -qq
     _sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin -qq
+    if ! command -v docker &>/dev/null; then
+        error "Installation Docker échouée — docker introuvable après installation."
+        error "Vérifiez votre connexion internet et relancez L.I.S.A."
+        exit 1
+    fi
     _trace "apt" "docker-ce"
     _trace "apt" "docker-ce-cli"
     _trace "apt" "containerd.io"
     _trace "apt" "docker-compose-plugin"
-
     success "Docker et Docker Compose v2 installés."
 fi
 
