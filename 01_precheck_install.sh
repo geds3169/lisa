@@ -191,11 +191,21 @@ https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" | \
 
     _sudo apt-get update -qq
     _sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin -qq
-    success "Docker et Docker Compose v2 installés."
     _trace "apt" "docker-ce"
     _trace "apt" "docker-ce-cli"
     _trace "apt" "containerd.io"
     _trace "apt" "docker-compose-plugin"
+
+    # Démarrer et activer Docker
+    _sudo systemctl enable docker 2>/dev/null || true
+    _sudo systemctl start docker 2>/dev/null || true
+
+    # Attendre que le groupe docker soit créé (max 10s)
+    for i in $(seq 1 10); do
+        getent group docker &>/dev/null && break
+        sleep 1
+    done
+    success "Docker et Docker Compose v2 installés."
 fi
 
 # ===================================================================================
@@ -203,7 +213,7 @@ fi
 # ===================================================================================
 section "Groupe Docker"
 
-if groups "$USER" | grep -q "\bdocker\b"; then
+if getent group docker | grep -qw "$USER"; then
     success "Utilisateur $USER déjà dans le groupe docker."
 else
     info "Ajout de $USER au groupe docker..."
