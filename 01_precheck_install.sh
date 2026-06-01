@@ -229,38 +229,18 @@ else
     success "Utilisateur ajouté au groupe docker."
     _trace "docker_group" "$USER"
 
-    # Écrire marqueur ET reprise .bashrc AVANT tout rechargement
     echo "DOCKER_GROUP_ADDED" > "$STATE_FILE"
 
-    if ! grep -q "LISA_AUTO_RESUME" "$HOME/.bashrc" 2>/dev/null; then
-        cat >> "$HOME/.bashrc" << 'BASHRC'
-
-# LISA_AUTO_RESUME
-if [ -f "$HOME/ai-stack/.lisa_state" ]; then
-    _LS=$(cat "$HOME/ai-stack/.lisa_state" 2>/dev/null)
-    if [ "$_LS" = "DOCKER_GROUP_ADDED" ]; then
-        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-        echo -e "\033[1;36m  L.I.S.A. — Reprise de l'installation\033[0m"
-        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-        sed -i '/LISA_AUTO_RESUME/,/^fi$/d' "$HOME/.bashrc"
-        bash "$HOME/ai-stack/01_precheck_install.sh"
-    fi
-fi
-BASHRC
-    fi
-
-    kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
-    kill "$INHIBIT_PID" 2>/dev/null
-
     echo ""
-    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[1;32m  ✓ Groupe Docker configuré.\033[0m"
+    echo -e "\033[1;36m  Rechargement du groupe en cours...\033[0m"
     echo ""
-    echo -e "\033[1;33m  → Ouvrez un nouveau terminal.\033[0m"
-    echo -e "\033[1;33m  → L'installation reprendra automatiquement.\033[0m"
-    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo ""
-    exit 0
+
+    # Recharger le groupe docker dans la session courante via newgrp
+    # newgrp exécute la commande dans un shell avec le nouveau groupe actif
+    exec newgrp docker << NEWGRP_EOF
+bash "$STACK_DIR/01_precheck_install.sh"
+NEWGRP_EOF
 fi
 
 # ===================================================================================

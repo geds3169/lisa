@@ -450,20 +450,6 @@ fi
 # ===================================================================================
 echo "CONFIG_DONE" > "$STATE_FILE"
 
-if ! grep -q "LISA_AUTO_RESUME" "$HOME/.bashrc" 2>/dev/null; then
-    cat >> "$HOME/.bashrc" << 'BASHRC'
-
-# LISA_AUTO_RESUME
-if [ -f "$HOME/ai-stack/.lisa_state" ]; then
-    _LS=$(cat "$HOME/ai-stack/.lisa_state")
-    if [ "$_LS" = "DOCKER_GROUP_ADDED" ]; then
-        echo -e "\033[1;36m[L.I.S.A]\033[0m Reprise (groupe docker appliqué)..."
-        sed -i '/LISA_AUTO_RESUME/,/^fi$/d' "$HOME/.bashrc"
-        bash "$HOME/ai-stack/01_precheck_install.sh"
-    fi
-fi
-BASHRC
-fi
 
 kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
 
