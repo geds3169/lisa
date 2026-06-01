@@ -264,39 +264,136 @@ BASHRC
 fi
 
 # ===================================================================================
-# PARE-FEU (UFW)
+# PARE-FEU
 # ===================================================================================
 section "Configuration du pare-feu"
 
-if ! command -v ufw &>/dev/null; then
-    info "Installation de UFW..."
-    _sudo apt-get install -y ufw -qq
-fi
-
-# Règles de base
-_sudo ufw --force reset > /dev/null 2>&1
-_sudo ufw default deny incoming > /dev/null 2>&1
-_sudo ufw default allow outgoing > /dev/null 2>&1
-_sudo ufw allow ssh > /dev/null 2>&1
-
-# Ports L.I.S.A. — uniquement l'API et Caddy sont exposés
-_sudo ufw allow 80/tcp  > /dev/null 2>&1   # Caddy HTTP
-_sudo ufw allow 443/tcp > /dev/null 2>&1   # Caddy HTTPS
-
-# Ports internes Docker (accessibles uniquement en local via le réseau interne)
-# Ollama (11434), API (8000), STT, TTS, RAG, SearXNG : non exposés sur le host
-
-if [[ "$EXPOSE_INTERNET" == "true" ]]; then
-    info "Ports 80 et 443 ouverts pour l'accès externe via Caddy."
+# Ports nécessaires selon le mode
+LISA_API_PORT=8001
+PORTS_NEEDED=()
+if [ "$EXPOSE_INTERNET" = "true" ]; then
+    PORTS_NEEDED=(80 443)
 else
-    # Mode local uniquement : on ouvre l'API sur loopback
-    _sudo ufw allow from 127.0.0.1 to any port 8001 > /dev/null 2>&1
-    info "Mode local — API accessible uniquement sur 127.0.0.1:8001"
+    PORTS_NEEDED=($LISA_API_PORT)
 fi
 
-_sudo ufw --force enable > /dev/null 2>&1
-success "Pare-feu UFW configuré."
-_sudo ufw status verbose 2>/dev/null | grep -E "Status|ALLOW|DENY" | while read LINE; do info "  $LINE"; done
+# Détecter le pare-feu actif
+FW_TYPE="none"
+if command -v ufw &>/dev/null && _sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+    FW_TYPE="ufw"
+elif command -v firewall-cmd &>/dev/null && _sudo firewall-cmd --state 2>/dev/null | grep -q "running"; then
+    FW_TYPE="firewalld"
+elif _sudo iptables -L &>/dev/null 2>&1; then
+    FW_TYPE="iptables"
+fi
+
+info "Pare-feu détecté : ${FW_TYPE}"
+
+# Vérifier les conflits de ports
+_port_in_use() {
+    local PORT=$1
+    ss -tlnp 2>/dev/null | grep -q ":${PORT} " ||     _sudo lsof -i ":${PORT}" &>/dev/null 2>&1
+}
+
+_ask_alt_port() {
+    local PORT=$1
+    local ALT_PORT=""
+    echo ""
+    warn "  Le port $PORT est déjà utilisé sur cette machine."
+    echo -ne "${YELLOW}  [?]${RESET} Port alternatif pour L.I.S.A. (laisser vide pour $PORT) : "
+    read -r ALT_PORT
+    echo "${ALT_PORT:-$PORT}"
+}
+
+# Vérifier conflits et proposer alternatives
+for PORT in "${PORTS_NEEDED[@]}"; do
+    if _port_in_use "$PORT"; then
+        NEW_PORT=$(_ask_alt_port "$PORT")
+        if [ "$PORT" = "80" ];   then HTTP_PORT=$NEW_PORT;  else HTTP_PORT=80;  fi
+        if [ "$PORT" = "443" ];  then HTTPS_PORT=$NEW_PORT; else HTTPS_PORT=443; fi
+        if [ "$PORT" = "$LISA_API_PORT" ]; then LISA_API_PORT=$NEW_PORT; fi
+    fi
+done
+HTTP_PORT=${HTTP_PORT:-80}
+HTTPS_PORT=${HTTPS_PORT:-443}
+
+# Sauvegarder les ports dans lisa.conf
+echo "LISA_API_PORT="$LISA_API_PORT"" >> "$CONF_FILE"
+echo "HTTP_PORT="$HTTP_PORT""         >> "$CONF_FILE"
+echo "HTTPS_PORT="$HTTPS_PORT""       >> "$CONF_FILE"
+echo "FW_TYPE=\"$FW_TYPE\""             >> "$CONF_FILE"
+
+# Snapshot de l'état du pare-feu AVANT modification
+FW_SNAPSHOT="$STACK_DIR/.firewall_snapshot"
+info "Sauvegarde de l'état du pare-feu..."
+case "$FW_TYPE" in
+    ufw)
+        _sudo ufw status numbered > "$FW_SNAPSHOT" 2>/dev/null
+        _trace "firewall_snapshot" "$FW_SNAPSHOT"
+        ;;
+    firewalld)
+        _sudo firewall-cmd --list-all > "$FW_SNAPSHOT" 2>/dev/null
+        _trace "firewall_snapshot" "$FW_SNAPSHOT"
+        ;;
+    iptables)
+        _sudo iptables-save > "$FW_SNAPSHOT" 2>/dev/null
+        _trace "firewall_snapshot" "$FW_SNAPSHOT"
+        ;;
+esac
+[ -f "$FW_SNAPSHOT" ] && success "Snapshot pare-feu sauvegardé."
+
+# Appliquer les règles selon le pare-feu détecté
+case "$FW_TYPE" in
+    ufw)
+        # Ajouter uniquement les règles L.I.S.A. sans reset
+        if [ "$EXPOSE_INTERNET" = "true" ]; then
+            _sudo ufw allow ${HTTP_PORT}/tcp  > /dev/null 2>&1
+            _sudo ufw allow ${HTTPS_PORT}/tcp > /dev/null 2>&1
+            success "UFW : ports $HTTP_PORT et $HTTPS_PORT ouverts."
+        else
+            _sudo ufw allow from 127.0.0.1 to any port $LISA_API_PORT > /dev/null 2>&1
+            success "UFW : API accessible sur 127.0.0.1:$LISA_API_PORT"
+        fi
+        ;;
+    firewalld)
+        if [ "$EXPOSE_INTERNET" = "true" ]; then
+            _sudo firewall-cmd --permanent --add-port=${HTTP_PORT}/tcp  > /dev/null 2>&1
+            _sudo firewall-cmd --permanent --add-port=${HTTPS_PORT}/tcp > /dev/null 2>&1
+            _sudo firewall-cmd --reload > /dev/null 2>&1
+            success "firewalld : ports $HTTP_PORT et $HTTPS_PORT ouverts."
+        else
+            _sudo firewall-cmd --permanent --add-rich-rule="rule family=ipv4 source address=127.0.0.1 port port=$LISA_API_PORT protocol=tcp accept" > /dev/null 2>&1
+            _sudo firewall-cmd --reload > /dev/null 2>&1
+            success "firewalld : API accessible sur 127.0.0.1:$LISA_API_PORT"
+        fi
+        ;;
+    iptables)
+        if [ "$EXPOSE_INTERNET" = "true" ]; then
+            _sudo iptables -A INPUT -p tcp --dport $HTTP_PORT  -j ACCEPT 2>/dev/null
+            _sudo iptables -A INPUT -p tcp --dport $HTTPS_PORT -j ACCEPT 2>/dev/null
+            success "iptables : ports $HTTP_PORT et $HTTPS_PORT ouverts."
+        else
+            _sudo iptables -A INPUT -p tcp -s 127.0.0.1 --dport $LISA_API_PORT -j ACCEPT 2>/dev/null
+            success "iptables : API accessible sur 127.0.0.1:$LISA_API_PORT"
+        fi
+        ;;
+    none)
+        # Aucun pare-feu — installer UFW minimal
+        info "Aucun pare-feu actif — installation de UFW..."
+        _sudo apt-get install -y ufw -qq
+        _sudo ufw default deny incoming  > /dev/null 2>&1
+        _sudo ufw default allow outgoing > /dev/null 2>&1
+        _sudo ufw allow ssh              > /dev/null 2>&1
+        if [ "$EXPOSE_INTERNET" = "true" ]; then
+            _sudo ufw allow ${HTTP_PORT}/tcp  > /dev/null 2>&1
+            _sudo ufw allow ${HTTPS_PORT}/tcp > /dev/null 2>&1
+        else
+            _sudo ufw allow from 127.0.0.1 to any port $LISA_API_PORT > /dev/null 2>&1
+        fi
+        _sudo ufw --force enable > /dev/null 2>&1
+        success "UFW installé et configuré."
+        ;;
+esac
 
 # ===================================================================================
 # MARQUEUR D'ÉTAT

@@ -112,6 +112,37 @@ tac "$TRACE_FILE" 2>/dev/null | while IFS='|' read -r TYPE VALUE; do
                 info "  Source APT supprimée : $VALUE"
             fi
             ;;
+        firewall_snapshot)
+            # Restaurer l'état du pare-feu depuis le snapshot
+            if [ -f "$VALUE" ]; then
+                source "$STACK_DIR/lisa.conf" 2>/dev/null
+                case "$FW_TYPE" in
+                    ufw)
+                        info "  Restauration pare-feu UFW..."
+                        # Supprimer uniquement les règles ajoutées par L.I.S.A.
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S ufw delete allow ${HTTP_PORT:-80}/tcp  &>/dev/null || true
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S ufw delete allow ${HTTPS_PORT:-443}/tcp &>/dev/null || true
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S ufw delete allow from 127.0.0.1 to any port ${LISA_API_PORT:-8001} &>/dev/null || true
+                        ;;
+                    firewalld)
+                        info "  Restauration pare-feu firewalld..."
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S firewall-cmd --permanent --remove-port=${HTTP_PORT:-80}/tcp  &>/dev/null || true
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S firewall-cmd --permanent --remove-port=${HTTPS_PORT:-443}/tcp &>/dev/null || true
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S firewall-cmd --reload &>/dev/null || true
+                        ;;
+                    iptables)
+                        info "  Restauration iptables depuis snapshot..."
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S iptables-restore < "$VALUE" &>/dev/null || true
+                        ;;
+                    none)
+                        # UFW a été installé par L.I.S.A. — on le désactive
+                        echo "$(_get_pass 2>/dev/null)" | sudo -S ufw --force disable &>/dev/null || true
+                        ;;
+                esac
+                rm -f "$VALUE"
+                info "  Pare-feu restauré."
+            fi
+            ;;
         bashrc)
             sed -i "/${VALUE}/,/^fi$/d" "$HOME/.bashrc" 2>/dev/null
             info "  .bashrc nettoyé    : $VALUE"
