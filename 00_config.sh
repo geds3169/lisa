@@ -318,7 +318,7 @@ STEP=$((STEP + 1))
     BAR=$(_bar "$PCT")
     BAR_DONE=$(_bar 100)
 
-    printf "  [|]  %-40s  %3d%%  %s" "Mise à jour des sources de paquets" "$PCT" "$BAR"
+    printf "  [ .. ]  %-40s  %3d%%  %s\n" "Mise à jour des sources de paquets" "$PCT" "$BAR"
 
     PASS=$(_get_pass)
     APT_OUT=$(echo "$PASS" | sudo -S apt-get update -qq 2>&1)
@@ -342,7 +342,7 @@ STEP=$((STEP + 1))
             unset PASS
 
             # Réessayer
-            printf "  [|]  %-40s  %3d%%  %s" "Mise à jour des sources de paquets" "$PCT" "$BAR"
+            printf "  [ .. ]  %-40s  %3d%%  %s\n" "Mise à jour des sources de paquets" "$PCT" "$BAR"
             PASS=$(_get_pass)
             echo "$PASS" | sudo -S apt-get update -qq >> "$LOG_FILE" 2>&1
             APT_RC=$?

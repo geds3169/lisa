@@ -248,11 +248,8 @@ else
     echo -e "\033[1;36m  Rechargement du groupe en cours...\033[0m"
     echo ""
 
-    # Recharger le groupe docker dans la session courante via newgrp
-    # newgrp exécute la commande dans un shell avec le nouveau groupe actif
-    exec newgrp docker << NEWGRP_EOF
-bash "$STACK_DIR/01_precheck_install.sh"
-NEWGRP_EOF
+    # Recharger le groupe docker via sg (plus fiable que newgrp avec heredoc)
+    exec sg docker -c "bash \"$STACK_DIR/01_precheck_install.sh\""
 fi
 
 # ===================================================================================
