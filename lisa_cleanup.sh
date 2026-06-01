@@ -135,15 +135,24 @@ find "$HOME" -maxdepth 3 -name "install.sh" 2>/dev/null | xargs rm -f 2>/dev/nul
     kill "$(cat "$STACK_DIR/.sudo_keepalive.pid")" 2>/dev/null
 pkill -f "systemd-inhibit.*LISA" 2>/dev/null || true
 
-# Supprimer le fichier de trace et le log
+# Supprimer uniquement le fichier de trace
+# Le log est conservé pour diagnostic
 rm -f "$TRACE_FILE"
-rm -f "$LOG_FILE" "$LOG_BACKUP" 2>/dev/null || true
-success "Fichier de trace et logs supprimés."
+success "Fichier de trace supprimé."
 
 echo ""
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo -e "${YELLOW}  Nettoyage terminé.${RESET}"
+echo ""
+if [ -f "$LOG_BACKUP" ]; then
+echo -e "${CYAN}  Un log de diagnostic a été conservé :${RESET}"
+echo -e "${BLUE}  $LOG_BACKUP${RESET}"
+echo -e "${CYAN}  Vous pouvez le consulter pour comprendre l'erreur,${RESET}"
+echo -e "${CYAN}  puis le supprimer avec :${RESET}"
+echo -e "${GREEN}  rm $LOG_BACKUP${RESET}"
+echo ""
+fi
 echo -e "${YELLOW}  Pour relancer L.I.S.A. :${RESET}"
-echo -e "${YELLOW}  ${BLUE}curl -fsSL https://raw.githubusercontent.com/geds3169/lisa/main/install.sh -o install.sh && bash install.sh${RESET}"
+echo -e "${GREEN}  curl -fsSL https://raw.githubusercontent.com/geds3169/lisa/main/install.sh -o install.sh && bash install.sh${RESET}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
