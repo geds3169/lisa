@@ -277,14 +277,19 @@ else
     PORTS_NEEDED=($LISA_API_PORT)
 fi
 
-# Détecter le pare-feu actif
+# Détecter le pare-feu actif — timeouts pour éviter les blocages
 FW_TYPE="none"
-if command -v ufw &>/dev/null && _sudo ufw status 2>/dev/null | grep -q "Status: active"; then
-    FW_TYPE="ufw"
-elif command -v firewall-cmd &>/dev/null && _sudo firewall-cmd --state 2>/dev/null | grep -q "running"; then
-    FW_TYPE="firewalld"
-elif _sudo iptables -L &>/dev/null 2>&1; then
-    FW_TYPE="iptables"
+if command -v ufw &>/dev/null; then
+    UFW_STATUS=$(timeout 3 bash -c "echo '$(_get_pass)' | sudo -S ufw status 2>/dev/null" 2>/dev/null)
+    echo "$UFW_STATUS" | grep -q "Status: active" && FW_TYPE="ufw"
+fi
+if [ "$FW_TYPE" = "none" ] && command -v firewall-cmd &>/dev/null; then
+    FWCMD_STATUS=$(timeout 3 bash -c "echo '$(_get_pass)' | sudo -S firewall-cmd --state 2>/dev/null" 2>/dev/null)
+    echo "$FWCMD_STATUS" | grep -q "running" && FW_TYPE="firewalld"
+fi
+if [ "$FW_TYPE" = "none" ]; then
+    # Vérifier iptables sans le charger
+    timeout 3 bash -c "echo '$(_get_pass)' | sudo -S iptables -n -L INPUT --line-numbers 2>/dev/null"         | grep -q "Chain INPUT" && FW_TYPE="iptables"
 fi
 
 info "Pare-feu détecté : ${FW_TYPE}"
