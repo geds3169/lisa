@@ -1,8 +1,8 @@
 #!/bin/bash
 # ===================================================================================
 # L.I.S.A — lisa_cleanup.sh
-# Nettoyage centralisé — appelé par tous les scripts en cas d'échec ou d'interruption
-# Usage : bash lisa_cleanup.sh [raison]
+# Nettoyage basé sur le fichier de trace ~/.lisa_trace
+# Appelé par tous les scripts en cas d'échec ou d'interruption
 # ===================================================================================
 
 RED="\033[1;31m"
@@ -18,156 +18,127 @@ error()   { echo -e "${RED}[ERROR]${RESET} $1"; }
 success() { echo -e "${GREEN}[OK]${RESET} $1"; }
 
 RAISON="${1:-interruption}"
+TRACE_FILE="$HOME/.lisa_trace"
 STACK_DIR="$HOME/ai-stack"
-SNAPSHOT_FILE="$STACK_DIR/.docker_snapshot"
-PASS_ENC="$STACK_DIR/.lisa_pass.gpg"
-PASS_KEY="$STACK_DIR/.lisa_pass.key"
-INSTALL_SH="$(pwd)/install.sh"
 LOG_FILE="$STACK_DIR/lisa_install.log"
 
 echo ""
 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${RED}  L.I.S.A. — Nettoyage en cours (${RAISON})${RESET}"
+echo -e "${RED}  L.I.S.A. — Nettoyage (${RAISON})${RESET}"
 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 
-# ===================================================================================
-# 1. SUPPRESSION DES SECRETS ÉPHÉMÈRES
-# ===================================================================================
-info "Suppression des secrets éphémères..."
-rm -f "$PASS_ENC" "$PASS_KEY" "$STACK_DIR/.env.plain" "$STACK_DIR/.env.key"
-success "Secrets supprimés."
+# Docker peut ne pas être dans le PATH courant
+DOCKER_BIN=$(which docker 2>/dev/null)
+[ -z "$DOCKER_BIN" ] && DOCKER_BIN=$(find /usr/bin /usr/local/bin -name "docker" 2>/dev/null | head -1)
 
-# ===================================================================================
-# 2. ARRÊT ET SUPPRESSION DES CONTAINERS L.I.S.A.
-# ===================================================================================
-if command -v docker &>/dev/null; then
-    info "Arrêt des containers L.I.S.A...."
-
-    # Arrêt via compose si le fichier existe
-    if [ -f "$STACK_DIR/docker-compose.yml" ]; then
-        docker compose -f "$STACK_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null \
-            && success "Stack Docker arrêtée." \
-            || warn "Impossible d'arrêter via compose — tentative manuelle..."
-    fi
-
-    # Suppression des containers estampillés lisa
-    LISA_CONTAINERS=$(docker ps -a --filter "label=lisa.stack=true" --format "{{.Names}}" 2>/dev/null)
-    if [ -n "$LISA_CONTAINERS" ]; then
-        echo "$LISA_CONTAINERS" | xargs docker rm -f 2>/dev/null
-        success "Containers L.I.S.A. supprimés : $(echo $LISA_CONTAINERS | tr '\n' ' ')"
-    else
-        info "Aucun container L.I.S.A. à supprimer."
-    fi
-
-    # Suppression des images estampillées lisa
-    LISA_IMAGES=$(docker images --filter "label=lisa.stack=true" -q 2>/dev/null)
-    if [ -n "$LISA_IMAGES" ]; then
-        echo "$LISA_IMAGES" | xargs docker rmi -f 2>/dev/null
-        success "Images L.I.S.A. supprimées."
-    else
-        info "Aucune image L.I.S.A. à supprimer."
-    fi
-
-    # Suppression des images construites par le build (par nom)
-    for IMG in lisa/api lisa/llm lisa/stt lisa/tts lisa/rag; do
-        if docker image inspect "$IMG:latest" &>/dev/null 2>&1; then
-            docker rmi -f "$IMG:latest" 2>/dev/null
-            info "Image $IMG supprimée."
-        fi
-    done
-
-    # Nettoyage des volumes L.I.S.A. (pas les volumes existants avant installation)
-    if [ -f "$SNAPSHOT_FILE" ]; then
-        source "$SNAPSHOT_FILE"
-        EXISTING_VOLUMES=$(echo "$VOLUMES" | tr ',' '\n')
-        LISA_VOLUMES=$(docker volume ls --format "{{.Name}}" 2>/dev/null | grep -E "^(ollama_data|qdrant_data|searxng_data|caddy_data|caddy_config)$")
-        for VOL in $LISA_VOLUMES; do
-            if ! echo "$EXISTING_VOLUMES" | grep -q "^${VOL}$"; then
-                docker volume rm "$VOL" 2>/dev/null && info "Volume $VOL supprimé."
-            fi
-        done
-    else
-        # Pas de snapshot — on supprime uniquement les volumes L.I.S.A. connus
-        for VOL in ollama_data qdrant_data searxng_data caddy_data caddy_config; do
-            docker volume rm "$VOL" 2>/dev/null && info "Volume $VOL supprimé." || true
-        done
-    fi
-
-    # Suppression du réseau Docker L.I.S.A.
-    docker network rm lisa_internal lisa_external 2>/dev/null && info "Réseaux L.I.S.A. supprimés." || true
-
-    success "Environnement Docker nettoyé."
-
-    # ===================================================================================
-    # 3. AFFICHAGE DU SNAPSHOT (info pour l'utilisateur)
-    # ===================================================================================
-    if [ -f "$SNAPSHOT_FILE" ]; then
-        source "$SNAPSHOT_FILE"
-        echo ""
-        info "Votre environnement Docker avant L.I.S.A. :"
-        [ -n "$IMAGES" ]     && info "  Images     : $IMAGES"
-        [ -n "$CONTAINERS" ] && info "  Containers : $CONTAINERS"
-        [ -n "$VOLUMES" ]    && info "  Volumes    : $VOLUMES"
-        warn "Les containers existants ont été préservés."
-    fi
+if [ ! -f "$TRACE_FILE" ]; then
+    warn "Fichier de trace absent — nettoyage minimal."
+    rm -f "$STACK_DIR/.lisa_pass.gpg" "$STACK_DIR/.lisa_pass.key" \
+          "$STACK_DIR/.env.plain" "$STACK_DIR/.env.key"
+    rm -rf "$STACK_DIR"
+    sed -i '/LISA_AUTO_RESUME/,/^fi$/d' "$HOME/.bashrc" 2>/dev/null
+    sed -i '/LISA_SUDO_RESUME/,/^fi$/d' "$HOME/.bashrc" 2>/dev/null
+    find "$HOME" -maxdepth 3 -name "install.sh" 2>/dev/null | xargs rm -f 2>/dev/null
+    echo ""
+    echo -e "${YELLOW}Nettoyage minimal terminé.${RESET}"
+    exit 0
 fi
 
-# ===================================================================================
-# 4. SUPPRESSION DU RÉPERTOIRE AI-STACK
-# ===================================================================================
-info "Suppression du répertoire d'installation..."
-
-# Conserver le log pour diagnostic si échec
+# Sauvegarder le log avant suppression
 if [ -f "$LOG_FILE" ]; then
     LOG_BACKUP="$HOME/lisa_install_$(date '+%Y%m%d_%H%M%S').log"
     cp "$LOG_FILE" "$LOG_BACKUP"
     info "Log conservé : $LOG_BACKUP"
 fi
 
-rm -rf "$STACK_DIR"
-success "Répertoire $STACK_DIR supprimé."
+# Arrêter la stack Docker si elle tourne
+if [ -f "$STACK_DIR/docker-compose.yml" ] && [ -n "$DOCKER_BIN" ]; then
+    "$DOCKER_BIN" compose -f "$STACK_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null
+fi
 
 # ===================================================================================
-# 5. SUPPRESSION DE install.sh
+# LECTURE DU FICHIER DE TRACE ET NETTOYAGE
 # ===================================================================================
-# Lire le chemin exact enregistré au lancement
-INSTALL_SH_PATH=""
-[ -f "$STACK_DIR/.install_sh_path" ] && INSTALL_SH_PATH=$(cat "$STACK_DIR/.install_sh_path")
+info "Lecture du fichier de trace..."
 
-# Supprimer depuis le chemin enregistré ET les emplacements probables
-for CANDIDATE in \
-    "$INSTALL_SH_PATH" \
-    "$(pwd)/install.sh" \
-    "$HOME/install.sh" \
-    "$HOME/Téléchargements/install.sh" \
-    "$HOME/Downloads/install.sh"; do
-    if [ -n "$CANDIDATE" ] && [ -f "$CANDIDATE" ]; then
-        rm -f "$CANDIDATE"
-        info "install.sh supprimé : $CANDIDATE"
-    fi
+# Traiter en ordre inverse pour supprimer les éléments dans le bon ordre
+tac "$TRACE_FILE" 2>/dev/null | while IFS='|' read -r TYPE VALUE; do
+    [ -z "$TYPE" ] || [ -z "$VALUE" ] && continue
+
+    case "$TYPE" in
+        file)
+            if [ -f "$VALUE" ]; then
+                rm -f "$VALUE"
+                info "  Fichier supprimé   : $VALUE"
+            fi
+            ;;
+        dir)
+            if [ -d "$VALUE" ]; then
+                rm -rf "$VALUE"
+                info "  Dossier supprimé   : $VALUE"
+            fi
+            ;;
+        docker_container)
+            if [ -n "$DOCKER_BIN" ]; then
+                "$DOCKER_BIN" rm -f "$VALUE" 2>/dev/null && \
+                    info "  Container supprimé : $VALUE"
+            fi
+            ;;
+        docker_image)
+            if [ -n "$DOCKER_BIN" ]; then
+                "$DOCKER_BIN" rmi -f "$VALUE" 2>/dev/null && \
+                    info "  Image supprimée    : $VALUE"
+            fi
+            ;;
+        docker_volume)
+            if [ -n "$DOCKER_BIN" ]; then
+                "$DOCKER_BIN" volume rm "$VALUE" 2>/dev/null && \
+                    info "  Volume supprimé    : $VALUE"
+            fi
+            ;;
+        docker_group)
+            # On ne retire pas l'utilisateur du groupe docker — trop risqué
+            info "  Groupe docker      : conservé (suppression manuelle si souhaité)"
+            ;;
+        apt)
+            # On ne désinstalle pas les paquets apt — trop risqué
+            info "  Paquet apt         : $VALUE conservé"
+            ;;
+        bashrc)
+            sed -i "/${VALUE}/,/^fi$/d" "$HOME/.bashrc" 2>/dev/null
+            info "  .bashrc nettoyé    : $VALUE"
+            ;;
+    esac
 done
 
-# ===================================================================================
-# 6. NETTOYAGE .BASHRC (entrées L.I.S.A.)
-# ===================================================================================
-if grep -q "LISA_AUTO_RESUME\|LISA_SUDO_RESUME" "$HOME/.bashrc" 2>/dev/null; then
-    sed -i '/LISA_AUTO_RESUME/,/^fi$/d' "$HOME/.bashrc" 2>/dev/null
-    sed -i '/LISA_SUDO_RESUME/,/^fi$/d' "$HOME/.bashrc" 2>/dev/null
-    info "Entrées L.I.S.A. supprimées de ~/.bashrc"
-fi
+# Supprimer le répertoire ai-stack s'il reste
+[ -d "$STACK_DIR" ] && rm -rf "$STACK_DIR" && info "  Dossier supprimé   : $STACK_DIR"
 
-# ===================================================================================
-# 7. ARRÊT DES PROCESSUS EN ARRIÈRE-PLAN
-# ===================================================================================
-# Keepalive sudo
-if [ -f "$STACK_DIR/.sudo_keepalive.pid" ]; then
-    KA_PID=$(cat "$STACK_DIR/.sudo_keepalive.pid" 2>/dev/null)
-    kill "$KA_PID" 2>/dev/null && info "Keepalive sudo arrêté."
-fi
+# Supprimer install.sh dans tous les emplacements
+for CANDIDATE in \
+    "$HOME/install.sh" \
+    "$HOME/Bureau/install.sh" \
+    "$HOME/Desktop/install.sh" \
+    "$HOME/Téléchargements/install.sh" \
+    "$HOME/Downloads/install.sh" \
+    "/tmp/install.sh"; do
+    if [ -f "$CANDIDATE" ]; then
+        rm -f "$CANDIDATE"
+        info "  install.sh supprimé : $CANDIDATE"
+    fi
+done
+find "$HOME" -maxdepth 3 -name "install.sh" 2>/dev/null | xargs rm -f 2>/dev/null
 
-# systemd-inhibit
+# Arrêter les processus en arrière-plan
+[ -f "$STACK_DIR/.sudo_keepalive.pid" ] && \
+    kill "$(cat "$STACK_DIR/.sudo_keepalive.pid")" 2>/dev/null
 pkill -f "systemd-inhibit.*LISA" 2>/dev/null || true
+
+# Supprimer le fichier de trace et le log
+rm -f "$TRACE_FILE"
+rm -f "$LOG_FILE" "$LOG_BACKUP" 2>/dev/null || true
+success "Fichier de trace et logs supprimés."
 
 echo ""
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -176,6 +147,3 @@ echo -e "${YELLOW}  Pour relancer L.I.S.A. :${RESET}"
 echo -e "${YELLOW}  ${BLUE}curl -fsSL https://raw.githubusercontent.com/geds3169/lisa/main/install.sh -o install.sh && bash install.sh${RESET}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
-
-echo "CLEANED" > /tmp/.lisa_cleaned 2>/dev/null || true
-exit 0

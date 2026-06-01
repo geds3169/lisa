@@ -147,6 +147,12 @@ done
 
 # --- Création du dossier stack ---
 mkdir -p "$STACK_DIR"
+TRACE_FILE="$HOME/.lisa_trace"
+_trace() { grep -qxF "${1}|${2}" "$TRACE_FILE" 2>/dev/null || echo "${1}|${2}" >> "$TRACE_FILE"; }
+touch "$TRACE_FILE" && chmod 600 "$TRACE_FILE"
+
+# Tracer install.sh et ai-stack
+_trace "dir"  "$STACK_DIR"
 info "Dossier cible : $STACK_DIR"
 
 # Enregistrer le chemin de install.sh pour suppression par lisa_cleanup.sh
@@ -199,6 +205,11 @@ echo ""
 info "Lancement de la configuration..."
 sleep 1
 
-# Désactiver le trap avant de passer la main (le cleanup est géré par 00_config.sh+)
+# Tracer install.sh pour suppression lors du nettoyage
+INSTALL_PATH="$(realpath "$0" 2>/dev/null || echo "$(pwd)/install.sh")"
+_trace "file" "$INSTALL_PATH"
+echo "$INSTALL_PATH" > "$STACK_DIR/.install_sh_path"
+
+# Désactiver le trap avant de passer la main
 trap - INT TERM ERR
 exec bash "$STACK_DIR/00_config.sh"

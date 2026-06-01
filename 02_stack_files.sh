@@ -69,9 +69,16 @@ trap 'exit 1' INT TERM
 # ===================================================================================
 # CRÉATION DES RÉPERTOIRES
 # ===================================================================================
+TRACE_FILE="$HOME/.lisa_trace"
+_trace() { grep -qxF "${1}|${2}" "$TRACE_FILE" 2>/dev/null || echo "${1}|${2}" >> "$TRACE_FILE"; }
+
 section "Création des répertoires"
 
 mkdir -p "$STACK_DIR"/{api,llm,stt,tts}
+_trace "dir" "$STACK_DIR/api"
+_trace "dir" "$STACK_DIR/llm"
+_trace "dir" "$STACK_DIR/stt"
+_trace "dir" "$STACK_DIR/tts"
 [ "$RAG_ENABLED" = "true" ] && mkdir -p "$STACK_DIR/rag"
 [ "$WEB_SEARCH_ENABLED" = "true" ] && mkdir -p "$STACK_DIR/search"
 [ "$EXPOSE_INTERNET" = "true" ] && mkdir -p "$STACK_DIR/caddy" "$STACK_DIR/authelia"
@@ -633,6 +640,7 @@ if [ "$EXPOSE_INTERNET" = "true" ]; then
 fi
 
 success "docker-compose.yml généré."
+_trace "file" "$STACK_DIR/docker-compose.yml"
 
 # ===================================================================================
 # MARQUEUR D'ÉTAT

@@ -36,6 +36,8 @@ fi
 # --- Helpers ---
 _get_pass() { openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:"$(cat "$STACK_DIR/.lisa_pass.key")" -in "$STACK_DIR/.lisa_pass.gpg" 2>/dev/null; }
 _sudo() { echo "$(_get_pass)" | sudo -S "$@" 2>/dev/null; }
+TRACE_FILE="$HOME/.lisa_trace"
+_trace() { grep -qxF "${1}|${2}" "$TRACE_FILE" 2>/dev/null || echo "${1}|${2}" >> "$TRACE_FILE"; }
 
 (while [ -f "$STACK_DIR/.lisa_pass.key" ]; do _sudo -v &>/dev/null; sleep 240; done) &
 SUDO_KA_PID=$!
@@ -147,6 +149,9 @@ docker compose build \
     exit 1
 }
 success "Build terminé."
+for IMG in lisa/llm lisa/stt lisa/tts lisa/api lisa/rag; do
+    _trace "docker_image" "${IMG}:latest"
+done
 
 # ===================================================================================
 # DÉMARRAGE SÉQUENTIEL
@@ -156,6 +161,8 @@ section "Démarrage des services"
 # 1. LLM en premier — le plus gourmand
 info "Démarrage du LLM (Ollama)..."
 docker compose up -d llm
+_trace "docker_container" "lisa_llm"
+_trace "docker_volume" "ollama_data"
 wait_for_resources "LLM" "$BASE_WAIT"
 health_check "LLM" "http://localhost:11434/api/tags" 20 "$((BASE_WAIT / 4))"
 LLM_OK=$?
@@ -266,4 +273,10 @@ success "Secrets éphémères supprimés."
 success "Mise en veille débloquée."
 
 echo "STACK_DONE" > "$STATE_FILE"
+
+# Nettoyage final — log et trace
+# On conserve uniquement le backup log pour diagnostic si besoin
+rm -f "$HOME/.lisa_trace"
+rm -f "$STACK_DIR/lisa_install.log"
 success "Installation L.I.S.A. terminée."
+info "Aucune trace laissée sur le système."

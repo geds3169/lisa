@@ -107,6 +107,9 @@ _input() {
     unset REPLY_INPUT
 }
 
+TRACE_FILE="$HOME/.lisa_trace"
+_trace() { grep -qxF "${1}|${2}" "$TRACE_FILE" 2>/dev/null || echo "${1}|${2}" >> "$TRACE_FILE"; }
+
 _bar() {
     local PCT=$1
     local FILLED=$(( PCT * 30 / 100 ))
@@ -136,9 +139,11 @@ _run() {
     local TOTAL="${2:-1}"
     local STEP="${3:-1}"
     local PCT=$(( STEP * 100 / TOTAL ))
-    local BAR
-    BAR=$(_bar "$PCT")
+    local BAR_RUNNING BAR_DONE
+    BAR_RUNNING=$(_bar "$PCT")
+    BAR_DONE=$(_bar 100)
 
+    # Spinner avec barre courante pendant l'exécution
     _spinner "$LABEL" "$PCT" &
     local SPINNER_PID=$!
 
@@ -152,9 +157,10 @@ _run() {
     wait "$SPINNER_PID" 2>/dev/null
 
     if [ $RC -eq 0 ]; then
-        printf "\r  [ OK ]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        # Toujours afficher 100% quand c'est terminé
+        printf "\r  [ OK ]  %-40s  100%%  %s\n\n" "$LABEL" "$BAR_DONE"
     else
-        printf "\r  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR"
+        printf "\r  [FAIL]  %-40s  %3d%%  %s\n\n" "$LABEL" "$PCT" "$BAR_RUNNING"
         error "Echec : $LABEL"
         error "Détails : $LOG_FILE"
         exit 1
@@ -240,6 +246,8 @@ echo ""
 EPHEMERAL_KEY=$(openssl rand -hex 32)
 echo "$EPHEMERAL_KEY" > "$PASS_KEY"
 chmod 600 "$PASS_KEY"
+_trace "file" "$PASS_KEY"
+_trace "file" "$PASS_ENC"
 
 _get_pass() {
     openssl enc -d -aes-256-cbc -pbkdf2 \
@@ -375,6 +383,13 @@ if [ ! -f "$ENV_KEY_FILE" ]; then
     openssl rand -hex 32 > "$ENV_KEY_FILE"
     chmod 600 "$ENV_KEY_FILE"
 fi
+_trace "file" "$ENV_KEY_FILE"
+_trace "file" "$STACK_DIR/.env.gpg"
+_trace "file" "$CONF_FILE"
+_trace "file" "$STATE_FILE"
+_trace "file" "$LOG_FILE"
+_trace "bashrc" "LISA_AUTO_RESUME"
+_trace "bashrc" "LISA_SUDO_RESUME"
 
 # ===================================================================================
 # ÉCRITURE PARTIELLE lisa.conf

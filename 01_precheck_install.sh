@@ -53,6 +53,8 @@ _get_pass() {
     openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:"$(cat "$PASS_KEY")" -in "$PASS_ENC" 2>/dev/null
 }
 _sudo() { echo "$(_get_pass)" | sudo -S "$@" 2>/dev/null; }
+TRACE_FILE="$HOME/.lisa_trace"
+_trace() { grep -qxF "${1}|${2}" "$TRACE_FILE" 2>/dev/null || echo "${1}|${2}" >> "$TRACE_FILE"; }
 
 # Keepalive sudo
 (while [ -f "$PASS_KEY" ]; do
@@ -123,6 +125,8 @@ if command -v docker &>/dev/null; then
         echo "VOLUMES=$(docker volume ls --format '{{.Name}}' | tr '\n' ',' | sed 's/,$//')"
         echo "NETWORKS=$(docker network ls --format '{{.Name}}' | tr '\n' ',' | sed 's/,$//')"
     } > "$SNAPSHOT_FILE"
+    _trace "file" "$SNAPSHOT_FILE"
+    _trace "file" "$STACK_DIR/.docker_restore.sh"
 
     # Script de restauration
     cat > "$STACK_DIR/.docker_restore.sh" << 'RESTORE'
@@ -167,7 +171,7 @@ else
 
     _sudo install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg 2>/dev/null
-    echo "$(_get_pass)" | sudo -S gpg --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.gpg 2>/dev/null
+    echo "$(_get_pass)" | sudo -S gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg < /tmp/docker.gpg 2>/dev/null
     rm -f /tmp/docker.gpg
     _sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
@@ -182,6 +186,10 @@ https://download.docker.com/linux/${DISTRO_ID} ${DISTRO_CODENAME} stable" | \
     _sudo apt-get update -qq
     _sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin -qq
     success "Docker et Docker Compose v2 installés."
+    _trace "apt" "docker-ce"
+    _trace "apt" "docker-ce-cli"
+    _trace "apt" "containerd.io"
+    _trace "apt" "docker-compose-plugin"
 fi
 
 # ===================================================================================
@@ -195,18 +203,40 @@ else
     info "Ajout de $USER au groupe docker..."
     _sudo usermod -aG docker "$USER"
     success "Utilisateur ajouté au groupe docker."
+    _trace "docker_group" "$USER"
 
+    # Écrire marqueur ET reprise .bashrc AVANT tout rechargement
     echo "DOCKER_GROUP_ADDED" > "$STATE_FILE"
-    warn "Le groupe docker sera actif à la prochaine session."
-    info "Une nouvelle session va s'ouvrir automatiquement pour appliquer le groupe."
-    info "L'installation reprendra automatiquement."
 
-    # Nettoyage keepalive avant exec
+    if ! grep -q "LISA_AUTO_RESUME" "$HOME/.bashrc" 2>/dev/null; then
+        cat >> "$HOME/.bashrc" << 'BASHRC'
+
+# LISA_AUTO_RESUME
+if [ -f "$HOME/ai-stack/.lisa_state" ]; then
+    _LS=$(cat "$HOME/ai-stack/.lisa_state" 2>/dev/null)
+    if [ "$_LS" = "DOCKER_GROUP_ADDED" ]; then
+        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        echo -e "\033[1;36m  L.I.S.A. — Reprise de l'installation\033[0m"
+        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        sed -i '/LISA_AUTO_RESUME/,/^fi$/d' "$HOME/.bashrc"
+        bash "$HOME/ai-stack/01_precheck_install.sh"
+    fi
+fi
+BASHRC
+    fi
+
     kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
     kill "$INHIBIT_PID" 2>/dev/null
 
-    # Reprise via newgrp pour recharger le groupe sans quitter la session
-    exec sg docker -c "bash $STACK_DIR/01_precheck_install.sh"
+    echo ""
+    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[1;32m  ✓ Groupe Docker configuré.\033[0m"
+    echo ""
+    echo -e "\033[1;33m  → Ouvrez un nouveau terminal.\033[0m"
+    echo -e "\033[1;33m  → L'installation reprendra automatiquement.\033[0m"
+    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    exit 0
 fi
 
 # ===================================================================================
